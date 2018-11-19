@@ -923,6 +923,22 @@ _RUNNER_OPTS = dict(
             )),
         ],
     ),
+    master_setup=dict(
+        combiner=combine_lists,
+        switches=[
+            (['--master-setup'], dict(
+                action='append',
+                help=('A command or list of shell commands to run before each'
+                      ' step in EMR (e.g. "touch foo"). Files included in'
+                      ' upload_files are copied over to the working directory'
+                      ' that the script runs from only if they are referenced'
+                      ' (relative to the working dir) in a command in the'
+                      ' list. References to upload_archives are not supported.'
+                      ' Variables set in the cmdenv options are set for'
+                      ' commands in the script.'),
+            )),
+        ],
+    ),
     max_mins_idle=dict(
         cloud_role='launch',
         switches=[

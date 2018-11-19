@@ -1871,6 +1871,31 @@ class MasterNodeSetupScriptTestCase(MockBoto3TestCase):
 
         self.assertTrue(contents.startswith(b'#!/usr/bin/env bash\n'))
 
+    def test_master_setup_script(self):
+        runner = EMRJobRunner(cmdenv={'COW':'MOO', 'CAT': 'MEOW'},
+                              master_setup=['echo "$COW"', 'echo "$CAT"'])
+
+        runner._add_master_node_setup_files_for_upload()
+        self.assertIsNotNone(runner._master_node_setup_script_path)
+
+        with open(runner._master_node_setup_script_path, 'rb') as f:
+            contents = f.read()
+
+        expected_contents = '  COW=MOO\n  CAT=MEOW\n' \
+                            '  echo "$COW"\n  echo "$CAT"\n'
+
+        self.assertIn(expected_contents, contents)
+
+    def test_master_setup_upload(self):
+        runner = EMRJobRunner(upload_files='moo.txt',
+                              master_setup=['cat moo.txt > meow.txt'])
+
+        runner._add_master_node_setup_files_for_upload()
+        self.assertIsNotNone(runner._master_node_setup_script_path)
+
+        self.assertIn('moo.txt', runner._upload_mgr._path_to_name)
+        self.assertNotIn('meow.txt', runner._upload_mgr._path_to_name)
+
 
 class EMRNoMapperTestCase(MockBoto3TestCase):
 
