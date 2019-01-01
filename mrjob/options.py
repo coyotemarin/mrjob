@@ -85,6 +85,16 @@ _OPTPARSE_TYPES = dict(
 # use to identify malformed JSON
 _PROBABLY_JSON_RE = re.compile(r'^\s*[\{\[\"].*$')
 
+# list of runners we implement
+_VALID_RUNNERS = [
+    'local',
+    'hadoop',
+    'emr',
+    'yarnemr',
+    'inline',
+    'dataproc'
+]
+
 
 ### custom actions ###
 
@@ -717,6 +727,26 @@ _RUNNER_OPTS = dict(
                       ' by mrjob. Takes the form <param>=<value>, where value'
                       ' is JSON or a string. Use <param>=null to unset a'
                       ' parameter'),
+            )),
+        ],
+    ),
+    expected_cores=dict(
+        switches=[
+            (['--expected-cores'], dict(
+                help=('This specifies the expected number of cores needed for'
+                      ' the job to run. This is required by jobs scheduled via'
+                      ' YARN in order to perform cluster scheduling.'),
+                type=int,
+            )),
+        ],
+    ),
+    expected_memory=dict(
+        switches=[
+            (['--expected-memory'], dict(
+                help=('This specifies the expected memory needed (in mb) for'
+                      ' the job to run. This is required by jobs scheduled via'
+                      ' YARN in order to perform cluster scheduling.'),
+                type=int,
             )),
         ],
     ),
@@ -1448,6 +1478,18 @@ _RUNNER_OPTS = dict(
             )),
         ],
     ),
+    yarn_logs_output_base=dict(
+        switches=[
+            (['--yarn-logs-output-base'], dict(
+                help=('Writes failure logs that are too large for stdout to'
+                      ' <this path>/<job key>_<log name>. In particular,'
+                      ' master setup failure logs and yarn application logs'
+                      ' after an application failure. Note, these logs will'
+                      ' not be cleaned up by mrjob and must be managed by'
+                      ' the user.'),
+            )),
+        ],
+    ),
     zone=dict(
         cloud_role='launch',
         switches=[
@@ -1608,10 +1650,8 @@ def _add_job_args(parser, include_deprecated=True):
         'and must be empty')
 
     parser.add_argument(
-        '-r', '--runner', dest='runner', default=None,
-        choices=('local', 'hadoop', 'emr', 'inline', 'dataproc'),
-        help=('Where to run the job; one of dataproc, emr, hadoop, inline,'
-              ' or local'))
+        '-r', '--runner', dest='runner', default=None, choices=_VALID_RUNNERS,
+        help='Where to run the job; one of %s' % ', '.join(_VALID_RUNNERS))
 
     parser.add_argument(
         '--step-output-dir', dest='step_output_dir', default=None,
