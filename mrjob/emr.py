@@ -751,7 +751,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
 
         exists = False
 
-        for uri, obj in self._s3_fs._ls(path):
+        for uri, obj in self.fs._ls(path):
             exists = True
 
             # we currently just look for 'ongoing-request="false"'
@@ -1160,9 +1160,6 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                       for k, v in sorted(kwargs.items()))))
         cluster_id = emr_client.run_job_flow(**kwargs)['JobFlowId']
 
-         # keep track of when we started our job
-        self._emr_job_start = time.time()
-
         log.info('Created new cluster %s' % cluster_id)
 
         # set EMR tags for the cluster
@@ -1505,12 +1502,11 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
 
         # create a cluster if we're not already using an existing one
         if not self._cluster_id:
-            self._cluster_id = self._create_cluster(
-                persistent=False)
+            self._cluster_id = self._create_cluster()
             self._created_cluster = True
         else:
-            log.info('Adding our job to existing cluster %s' %
-                     self._cluster_id)
+            log.info('Adding our job to existing cluster %s (%s)' %
+                     (self._cluster_id, self._address_of_master()))
 
         # now that we know which cluster it is, check for Spark support
         if self._has_spark_steps():
