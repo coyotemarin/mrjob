@@ -193,6 +193,20 @@ class HadoopArgsForStepTestCase(EmptyMrjobConfTestCase):
                               '-cmdenv', 'FOO=bar',
                               ])
 
+    def test_cmdenv_interpolation(self):
+        job = MRWordCount(['-r', 'local',
+                           '--cmdenv', 'FOO=b%sar',
+                           '--cmdenv', 'BAZ=qux%s',
+                           '--cmdenv', 'BA%sX=Arnold'])
+
+        with job.make_runner() as runner:
+            job_key = runner._job_key.replace('.', '_')
+            self.assertEqual(runner._hadoop_args_for_step(0),
+                             ['-cmdenv', 'BA%sX=Arnold',
+                              '-cmdenv', 'BAZ=qux{}'.format(job_key),
+                              '-cmdenv', 'FOO=b{}ar'.format(job_key),
+                              ])
+
     def test_hadoop_input_format(self):
         input_format = 'org.apache.hadoop.mapred.SequenceFileInputFormat'
 

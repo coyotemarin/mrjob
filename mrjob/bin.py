@@ -97,6 +97,12 @@ class MRJobBinRunner(MRJobRunner):
         if any('#' in path for path in self._opts['py_files']):
             raise ValueError("py_files cannot contain '#'")
 
+        # interpolate job key into cmdenvs
+        for key, value in self._opts['cmdenv'].items():
+            if '%s' in value:
+                job_key = self._job_key.replace('.', '_')
+                self._opts['cmdenv'][key] = value % job_key
+
     def _default_opts(self):
         return combine_dicts(
             super(MRJobBinRunner, self)._default_opts(),
