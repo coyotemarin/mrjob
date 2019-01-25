@@ -225,6 +225,12 @@ _CLUSTER_SELF_TERMINATED_RE = re.compile(
 # is available to read even if it's Glacier-archived
 _RESTORED_FROM_GLACIER = 'ongoing-request="false"'
 
+# complete list of EMR cluster states split into convenient sections
+_EMR_STATES_STARTING = ('STARTING', 'BOOTSTRAPPING')
+_EMR_STATUS_RUNNING = ('RUNNING', 'WAITING')
+_EMR_STATUS_TERMINATING = ('TERMINATING', 'TERMINATED',
+                           'TERMINATED_WITH_ERRORS')
+
 # In the event we enter the scheduling queue when spinning up new clusters,
 # we only allow at max this many clusters to spin up in parallel.
 _SCHEDULING_SPOOL_LENGTH = 3
@@ -252,7 +258,7 @@ def _make_lock_uri(cloud_tmp_dir, cluster_id, step_num):
 
 
 def _attempt_to_acquire_lock(s3_fs, lock_uri, sync_wait_time, job_key,
-                             mins_to_expiration=None):
+                             seconds_to_expiration=None):
     """Returns True if this session successfully took ownership of the lock
     specified by ``lock_uri``.
     """
@@ -268,12 +274,12 @@ def _attempt_to_acquire_lock(s3_fs, lock_uri, sync_wait_time, job_key,
 
     # if there's an unexpired lock, give up
     if key_data:
-        if mins_to_expiration is None:
+        if seconds_to_expiration is None:
             return False
         else:
             # dateutil is a boto3 dependency
             age = _boto3_now() - key_data['LastModified']
-            if age <= timedelta(minutes=mins_to_expiration):
+            if age <= timedelta(seconds=seconds_to_expiration):
                 return False
 
     # try to write our job's key
@@ -450,7 +456,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         # the keys 'history', 'step', and 'task'. These will also always
         # contain 'step_id' (the s-XXXXXXXX step ID on EMR).
         #
-        # This will be filled by _wait_for_steps_to_complete()
+        # This will be filled by _check_for_job_completion()
         #
         # This might work better as a dictionary.
         self._log_interpretations = []
@@ -756,7 +762,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
     def _finish_run(self):
         while True:
             try:
-                self._wait_for_steps_to_complete()
+                self._check_for_job_completion()
                 break
             except _PooledClusterSelfTerminatedException:
                 self._relaunch()
@@ -1614,7 +1620,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             ('%s=%r' % (k, v)) for k, v in steps_kwargs.items()))
         emr_client.add_job_flow_steps(**steps_kwargs)
 
-        # keep track of when we launched our job
+        # keep track of when we started our job
         self._emr_job_start = time.time()
 
         # SSH FS uses sudo if we're on AMI 4.3.0+ (see #1244)
@@ -1629,7 +1635,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         return _get_job_steps(
             self.make_emr_client(), self.get_cluster_id(), self.get_job_key())
 
-    def _wait_for_steps_to_complete(self):
+    def _check_for_job_completion(self):
         """Wait for every step of the job to complete, one by one."""
         # get info about expected number of steps
         num_steps = len(self._get_steps())
@@ -1652,7 +1658,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         # open SSH tunnel if cluster is already ready
         # (this happens with pooling). See #1115
         cluster = self._describe_cluster()
-        if cluster['Status']['State'] in ('RUNNING', 'WAITING'):
+        if cluster['Status']['State'] in _EMR_STATUS_RUNNING:
             self._set_up_ssh_tunnel_and_hdfs()
 
         # treat master node setup as step -1
@@ -1714,7 +1720,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                 reason_desc = (': %s' % reason) if reason else ''
 
                 # we can open the ssh tunnel if cluster is ready (see #1115)
-                if cluster['Status']['State'] in ('RUNNING', 'WAITING'):
+                if cluster['Status']['State'] in _EMR_STATUS_RUNNING:
                     self._set_up_ssh_tunnel_and_hdfs()
 
                 log.info('  PENDING (cluster is %s%s)' % (
@@ -1764,8 +1770,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                     cluster['Status']['State'],
                     reason_desc))
 
-                if cluster['Status']['State'] in (
-                        'TERMINATING', 'TERMINATED', 'TERMINATED_WITH_ERRORS'):
+                if cluster['Status']['State'] in _EMR_STATUS_TERMINATING:
                     # was it caused by a pooled cluster self-terminating?
                     # (if so, raise _PooledClusterSelfTerminatedException)
                     self._check_for_pooled_cluster_self_termination(
@@ -2775,6 +2780,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         return None
 
     def _lock_uri(self, cluster_id, num_steps):
+        """Lock unique per step"""
         return _make_lock_uri(self._opts['cloud_tmp_dir'],
                               cluster_id,
                               num_steps + 1)
@@ -2921,7 +2927,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         cache['collection_type'] = cluster.get(
             'InstanceCollectionType', 'INSTANCE_GROUP')
 
-        if cluster['Status']['State'] in ('RUNNING', 'WAITING'):
+        if cluster['Status']['State'] in _EMR_STATUS_RUNNING:
             cache['master_public_dns'] = cluster['MasterPublicDnsName']
 
     def _store_master_instance_info(self):

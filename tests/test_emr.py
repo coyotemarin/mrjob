@@ -4374,7 +4374,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
     def test_basic(self):
         runner = self.make_runner()
 
-        runner._wait_for_steps_to_complete()
+        runner._check_for_job_completion()
 
         self.assertEqual(EMRJobRunner._wait_for_step_to_complete.call_count, 2)
         self.assertTrue(EMRJobRunner._set_up_ssh_tunnel_and_hdfs.called)
@@ -4391,7 +4391,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
         runner = self.make_runner('--libjars', fake_jar)
 
         runner._add_master_node_setup_files_for_upload()
-        runner._wait_for_steps_to_complete()
+        runner._check_for_job_completion()
 
         self.assertIsNotNone(runner._master_node_setup_script_path)
 
@@ -4409,7 +4409,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
 
         self._wait_for_step_to_complete.side_effect = self.StopTest
 
-        self.assertRaises(self.StopTest, runner._wait_for_steps_to_complete)
+        self.assertRaises(self.StopTest, runner._check_for_job_completion)
         self.assertEqual(runner._log_interpretations, [])
         self.assertEqual(runner._mns_log_interpretation, None)
 
@@ -4422,7 +4422,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
 
         runner = self.make_runner()
 
-        self.assertRaises(self.StopTest, runner._wait_for_steps_to_complete)
+        self.assertRaises(self.StopTest, runner._check_for_job_completion)
 
         self.assertEqual(EMRJobRunner._wait_for_step_to_complete.call_count, 1)
 
@@ -4444,7 +4444,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
         mock_cluster['MasterPublicDnsName'] = 'mockmaster'
 
         # run until SSH tunnel is set up
-        self.assertRaises(self.StopTest, runner._wait_for_steps_to_complete)
+        self.assertRaises(self.StopTest, runner._check_for_job_completion)
 
         self.assertFalse(EMRJobRunner._wait_for_step_to_complete.called)
 
@@ -4460,7 +4460,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
         mock_cluster['MasterPublicDnsName'] = 'mockmaster'
 
         # run until SSH tunnel is set up
-        self.assertRaises(self.StopTest, runner._wait_for_steps_to_complete)
+        self.assertRaises(self.StopTest, runner._check_for_job_completion)
 
         self.assertFalse(EMRJobRunner._wait_for_step_to_complete.called)
 
@@ -4483,7 +4483,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
         self.assertEqual(len(mock_steps), 4)
 
         # run until ssh tunnel is called
-        self.assertRaises(self.StopTest, runner._wait_for_steps_to_complete)
+        self.assertRaises(self.StopTest, runner._check_for_job_completion)
 
         # should have only waited for first step
         self.assertEqual(EMRJobRunner._wait_for_step_to_complete.call_count, 1)
@@ -4528,7 +4528,7 @@ class WaitForStepsToCompleteTestCase(MockBoto3TestCase):
             side_effect=self.StopTest))
 
         self.assertRaises(self.StopTest,
-                          runner._wait_for_steps_to_complete)
+                          runner._check_for_job_completion)
 
         self.assertTrue(runner._check_for_missing_default_iam_roles.called)
         self.assertTrue(runner._check_for_failed_bootstrap_action.called)
