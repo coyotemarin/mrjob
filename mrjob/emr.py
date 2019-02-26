@@ -49,6 +49,7 @@ from mrjob.aws import EC2_INSTANCE_TYPE_TO_MEMORY
 from mrjob.aws import _boto3_now
 from mrjob.aws import _boto3_paginate
 from mrjob.aws import _wrap_aws_client
+from mrjob.cache import ClusterCache
 from mrjob.cloud import HadoopInTheCloudJobRunner
 from mrjob.compat import map_version
 from mrjob.compat import version_gte
@@ -233,6 +234,12 @@ _SCHEDULING_SPOOL_LENGTH = 3
 # multiple of the option `check_cluster_every` rounded down.
 _NEW_CLUSTER_WAIT_TIME = 1200  # 20 minutes
 
+# Since our file cache of cluster info will grow unboundedly as clusters
+# terminate and new clusters start we must cleanup at some point. When the
+# cache is strictly greater than this many days old, we delete the cache
+# and begin again.
+_CLUSTER_FILE_CACHE_TTL_DAYS = 3
+
 
 # used to bail out and retry when a pooled cluster self-terminates
 class _PooledClusterSelfTerminatedException(Exception):
@@ -315,6 +322,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         'bootstrap_spark',
         'bypass_pool_wait',
         'cloud_log_dir',
+        'cluster_cache_file',
         'core_instance_bid_price',
         'ebs_root_volume_gb',
         'ec2_endpoint',
@@ -456,8 +464,11 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         # transfer to S3 (so we don't do it twice)
         self._waited_for_logs_on_s3 = set()
 
-        # setup scheduling queue
+        # setup scheduling queue and cluster cache
         self._scheduling_queue = None
+        self._cluster_cache = None
+        if self._opts['cluster_cache_file'] is not None:
+            ClusterCache.setup(self._opts['cluster_cache_file'])
 
     ### Options ###
 
@@ -728,6 +739,15 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                                             _SCHEDULING_SPOOL_LENGTH,
                                             self)
         return self._scheduling_queue
+
+    @property
+    def cluster_cache(self):
+        if self._cluster_cache is None:
+            self._cluster_cache = ClusterCache(
+                                        self.make_emr_client(),
+                                        self._opts['cluster_cache_file'],
+                                        _CLUSTER_FILE_CACHE_TTL_DAYS)
+        return self._cluster_cache
 
     def _run(self):
         self._launch()
@@ -2438,7 +2458,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         """Get the ID of the cluster our job is running on, or ``None``."""
         return self._cluster_id
 
-    def _compare_cluster_setup(self, emr_client, cluster, req_pool_hash):
+    def _compare_cluster_setup(self, emr_client, cluster_info, req_pool_hash):
         """Check if the required configuration fields of the given cluster are
         the same as in the requested cluster.
 
@@ -2456,11 +2476,14 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
 
         :param emr_client: a boto3 EMR client. See
                            :py:meth:`~mrjob.emr.EMRJobRunner.make_emr_client`
-        :param cluster: EMR cluster dict to check if we are able to join.
+        :param cluster_info: EMR cluster and instance group information.
         :param req_pool_hash: Required pool hash. See :py:meth:`_pool_hash`.
 
         :return: A hashable key to sort clusters by.
         """
+        cluster = cluster_info['Cluster']
+        instances = cluster_info['Instances']
+
         cluster_id = cluster['Id']
 
         log.debug('  Considering joining cluster %s...' % cluster_id)
@@ -2563,29 +2586,17 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                 log.debug('    does not use instance fleets')
                 return
 
-            actual_fleets = list(_boto3_paginate(
-                'InstanceFleets', emr_client, 'list_instance_fleets',
-                ClusterId=cluster_id))
-
             req_fleets = self._opts['instance_fleets']
-
-            instance_sort_key = _instance_fleets_satisfy(
-                actual_fleets, req_fleets)
+            instance_sort_key = _instance_fleets_satisfy(instances,
+                                                         req_fleets)
         else:
             if collection_type != 'INSTANCE_GROUP':
                 log.debug('    does not use instance groups')
                 return
 
-            # check memory and compute units, bailing out if we hit
-            # an instance with too little memory
-            actual_igs = list(_boto3_paginate(
-                'InstanceGroups', emr_client, 'list_instance_groups',
-                ClusterId=cluster_id))
-
             requested_igs = self._instance_groups()
-
-            instance_sort_key = _instance_groups_satisfy(
-                actual_igs, requested_igs)
+            instance_sort_key = _instance_groups_satisfy(instances,
+                                                         requested_igs)
 
         if not instance_sort_key:
             return
@@ -2682,21 +2693,20 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                 continue
 
             # if we haven't seen this cluster before then check the setup
-            cluster, instance_sort_key = valid_clusters.get(cluster_id,
-                                                            (None, None,))
-            if cluster is None:
-                cluster = emr_client.describe_cluster(
-                    ClusterId=cluster_id)['Cluster']
+            cluster_info, instance_sort_key = \
+                valid_clusters.get(cluster_id, (None, None,))
+            if cluster_info is None:
+                cluster_info = self.cluster_cache.describe_cluster(cluster_id)
                 instance_sort_key = self._compare_cluster_setup(
-                        emr_client, cluster, req_pool_hash)
+                        emr_client, cluster_info, req_pool_hash)
                 if not instance_sort_key:
                     invalid_clusters.add(cluster_id)
                     continue
-                valid_clusters[cluster_id] = (cluster, instance_sort_key,)
+                valid_clusters[cluster_id] = (cluster_info, instance_sort_key,)
 
             # always check the cluster state
             num_steps_in_cluster = self._check_cluster_state(
-                emr_client, cluster, num_steps)
+                emr_client, cluster_info['Cluster'], num_steps)
             if num_steps_in_cluster == -1:
                 # don't add to invalid cluster list since the cluster may
                 # be valid when we next check
