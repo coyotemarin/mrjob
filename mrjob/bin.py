@@ -940,13 +940,13 @@ class MRJobBinRunner(MRJobRunner):
         cmdenv = {}
 
         if step['type'] in ('spark', 'spark_script'):  # not spark_jar
-            driver_python = cmd_line(self._python_bin())
+            driver_python = ' '.join(self._python_bin())
 
             if self._spark_python_wrapper_path:
                 executor_python = './%s' % self._working_dir_mgr.name(
                     'file', self._spark_python_wrapper_path)
             else:
-                executor_python = cmd_line(self._task_python_bin())
+                executor_python = ' '.join(self._task_python_bin())
 
             if self._spark_deploy_mode() == 'cluster':
                 # treat driver like executors (they run in same environment)
