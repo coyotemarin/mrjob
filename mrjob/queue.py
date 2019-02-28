@@ -65,7 +65,8 @@ class SchedulingQueue(object):
                       curr_date + datetime.timedelta(hours=1)]
         events = []
         for date in date_range:
-            marker_glob = date.strftime('{}_%Y-%m-%dT%HH%M-*').format(event_type)
+            marker_glob = date.strftime('{}_%Y-%m-%dT%H-*') \
+                            .format(event_type)
             marker_path = os.path.join(self.s3_prefix, marker_glob)
             events += list(self.s3_fs.ls(marker_path))
         return sorted(events)
@@ -75,7 +76,8 @@ class SchedulingQueue(object):
         last creation event."""
         last_creation = creation_events[-1].split('_')[1]
         old_attempts_indices = [i for i, marker in enumerate(attempt_events)
-                                if marker.split('_')[1] < last_creation]
+                                if marker.split('_')[1] <= last_creation]
+        assert len(old_attempts_indices) > 0, 'The list can not be empty here'
         return attempt_events[old_attempts_indices[-1] + 1:]
 
     def _recheck_clusters(self):
@@ -100,7 +102,7 @@ class SchedulingQueue(object):
         # Put a marker that we are trying to start a cluster. We maintain two
         # event types: "attempts_" for each process trying to create a cluster
         # and "creation_" after a process proceeds to create a cluster
-        curr_date_str = curr_date.strftime('%Y-%m-%dT%HH%M-%S%f')
+        curr_date_str = curr_date.strftime('%Y-%m-%dT%H-%M%S%f')
         attempt_marker = os.path.join(self.s3_prefix,
                                       'attempt_{}'.format(curr_date_str))
         creation_marker = os.path.join(self.s3_prefix,
@@ -118,7 +120,7 @@ class SchedulingQueue(object):
         if len(creation_events) != 0:
             # This case is quite subtle. Since we should only have run this
             # code when there were no active clusters, if there is already a
-            # creation event in the timeframe then either
+            # creation event in the pool then either
             #   1) between the initial list cluster and this point a cluster
             #      finished creation
             #   2) a cluster had been created but went down for some reason
@@ -127,8 +129,12 @@ class SchedulingQueue(object):
             # we proceed as normal but ignore these old creation events along
             # with attempt events before the last creation event.
             log.info('Found odd creation event, performing extra checks.')
-            if self._recheck_clusters():
-                return
+            # For some reason the below check is returning valid clusters
+            # while the outer loop is unable to find any. This is really odd
+            # and it's unclear why it's happening.
+            # if self._recheck_clusters():
+            #     log.info('Rechecked clusters and found a valid cluster.')
+            #     return
             attempt_events = self._get_recent_attempt(creation_events,
                                                       attempt_events)
             old_creation_events = set(creation_events)
@@ -141,26 +147,28 @@ class SchedulingQueue(object):
             self._runner._cluster_id = self._runner._create_cluster()
             self._runner._wait_for_cluster()
             self.s3_fs.danger_touchz(creation_marker)
-        else:
-            # Some other process or processes are creating clusters so wait
-            # for any one of them to finish and write it's marker. There is
-            # no need to wait for all of them as we will re-enter the find
-            # cluster logic after this.
-            curr_sleep_time = _START_CREATION_CHECK_SECONDS
-            total_curr_wait = 0
-            while len(creation_events) == 0:
-                log.info('Unable to grab cluster creation lock; sleeping for'
-                         ' {}s'.format(curr_sleep_time))
-                time.sleep(curr_sleep_time)
-                total_curr_wait += curr_sleep_time
-                all_creation_events = set(self._get_event_markers('creation',
-                                                                  curr_date))
-                creation_events = all_creation_events - old_creation_events
-                curr_sleep_time = max(curr_sleep_time // 2,
-                                      _MIN_CREATION_CHECK_SECONDS)
-                if total_curr_wait >= _MAX_CREATION_WAIT_TIME:
-                    log.info('Waited max time of {}s; re-entering cluster'
-                             ' discovery loop'.format(total_curr_wait))
-                    return
-                log.info('Saw creation events ({}), exiting waiting loop'
-                         .format(', '.join(creation_events)))
+            return True
+
+        # Some other process or processes are creating clusters so wait
+        # for any one of them to finish and write it's marker. There is
+        # no need to wait for all of them as we will re-enter the find
+        # cluster logic after this.
+        curr_sleep_time = _START_CREATION_CHECK_SECONDS
+        total_curr_wait = 0
+        while len(creation_events) == 0:
+            log.info('Unable to grab cluster creation lock; sleeping for'
+                     ' {}s'.format(curr_sleep_time))
+            time.sleep(curr_sleep_time)
+            total_curr_wait += curr_sleep_time
+            all_creation_events = set(self._get_event_markers('creation',
+                                                              curr_date))
+            creation_events = all_creation_events - old_creation_events
+            curr_sleep_time = max(curr_sleep_time // 2,
+                                  _MIN_CREATION_CHECK_SECONDS)
+            if total_curr_wait >= _MAX_CREATION_WAIT_TIME:
+                log.info('Waited max time of {}s; re-entering cluster'
+                         ' discovery loop'.format(total_curr_wait))
+                return False
+        log.info('Saw creation events ({}), exiting waiting loop'
+                 .format(', '.join(creation_events)))
+        return True

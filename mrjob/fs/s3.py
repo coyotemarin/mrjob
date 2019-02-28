@@ -212,6 +212,11 @@ class S3Filesystem(Filesystem):
 
         key.put(Body=b'')
 
+    def danger_touchz(self, dest):
+        """Make an empty file in the given location. Does no checks for if
+        the file already exists."""
+        self._get_s3_key(dest).put(Body=b'')
+
     # Utilities for interacting with S3 using S3 URIs.
 
     # Try to use the more general filesystem interface unless you really

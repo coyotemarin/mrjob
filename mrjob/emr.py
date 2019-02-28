@@ -85,6 +85,7 @@ from mrjob.pool import _pool_hash_and_name
 from mrjob.py2 import PY2
 from mrjob.py2 import string_types
 from mrjob.py2 import urlopen
+from mrjob.queue import SchedulingQueue
 from mrjob.runner import _blank_out_conflicting_opts
 from mrjob.setup import UploadDirManager
 from mrjob.setup import WorkingDirManager
@@ -223,6 +224,15 @@ _CLUSTER_SELF_TERMINATED_RE = re.compile(
 # is available to read even if it's Glacier-archived
 _RESTORED_FROM_GLACIER = 'ongoing-request="false"'
 
+# In the event we enter the scheduling queue when spinning up new clusters,
+# we only allow at max this many clusters to spin up in parallel.
+_SCHEDULING_SPOOL_LENGTH = 3
+
+# Approximate maximum time in seconds to wait while a new cluster is starting
+# and bootstrapping. This is approximate since we only wait to the closest
+# multiple of the option `check_cluster_every` rounded down.
+_NEW_CLUSTER_WAIT_TIME = 1200  # 20 minutes
+
 
 # used to bail out and retry when a pooled cluster self-terminates
 class _PooledClusterSelfTerminatedException(Exception):
@@ -303,6 +313,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         'aws_session_token',
         'bootstrap_actions',
         'bootstrap_spark',
+        'bypass_pool_wait',
         'cloud_log_dir',
         'core_instance_bid_price',
         'ebs_root_volume_gb',
@@ -445,6 +456,9 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         # transfer to S3 (so we don't do it twice)
         self._waited_for_logs_on_s3 = set()
 
+        # setup scheduling queue
+        self._scheduling_queue = None
+
     ### Options ###
 
     def _default_opts(self):
@@ -452,6 +466,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             super(EMRJobRunner, self)._default_opts(),
             dict(
                 bootstrap_python=None,
+                bypass_pool_wait=False,
                 check_cluster_every=30,
                 cleanup_on_failure=['JOB'],
                 cloud_fs_sync_secs=5.0,
@@ -701,6 +716,18 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                     self._s3_fs, LocalFilesystem())
 
         return self._fs
+
+    @property
+    def scheduling_queue(self):
+        if self._scheduling_queue is None:
+            unique_s3_prefix = os.path.join(self._opts['cloud_tmp_dir'],
+                                            'scheduling', self._pool_hash())
+            self._scheduling_queue = SchedulingQueue(
+                                            self.fs,
+                                            unique_s3_prefix,
+                                            _SCHEDULING_SPOOL_LENGTH,
+                                            self)
+        return self._scheduling_queue
 
     def _run(self):
         self._launch()
@@ -1191,6 +1218,43 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         self._add_tags(tags, cluster_id)
 
         return cluster_id
+
+    def _wait_for_cluster(self):
+        """Wait till the cluster has finishing bootstrapping before proceeding.
+
+        We sadly write our own waiter since 1) botocore's waiters do not work
+        with our retry logic and 2) they do not support intermediate logging.
+        We closely mirror the logic in :py:meth:`botocore.waiter.Waiter.wait`.
+        """
+        emr_client = self.make_emr_client()
+        cluster_id = self._cluster_id
+
+        sleep_amount = self._opts['check_cluster_every']
+        max_attempts = _NEW_CLUSTER_WAIT_TIME // sleep_amount
+        num_attempts = 0
+
+        while True:
+            num_attempts += 1
+            log.info('Checking cluster {} for running state, attempt {} of'
+                     ' {}'.format(cluster_id, num_attempts, max_attempts))
+            response = emr_client.describe_cluster(
+                ClusterId=cluster_id
+            )
+            state = response['Cluster']['Status']['State']
+            if state in _EMR_STATUS_RUNNING:
+                master_ip = response['Cluster']['MasterPublicDnsName']
+                log.info('Waiting complete, cluster {} reached running'
+                         ' state {} ({})'.format(cluster_id, state, master_ip))
+                return
+            elif state in _EMR_STATUS_TERMINATING:
+                raise Exception('Waiting failed, cluster {} reached error'
+                                ' state {}'.format(cluster_id, state))
+            else:
+                assert state in _EMR_STATES_STARTING, 'Reached invalid state'
+            if num_attempts >= max_attempts:
+                raise Exception('Max attempts exceeded, cluster {} in'
+                                ' state {}'.format(cluster_id, state))
+            time.sleep(sleep_amount)
 
     def _add_tags(self, tags, cluster_id):
         """Add tags in the dict *tags* to cluster *cluster_id*. Do nothing
@@ -2655,6 +2719,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         locked_clusters = set()
 
         max_wait_time = self._opts['pool_wait_minutes']
+        bypass_pool_wait = self._opts['bypass_pool_wait']
         now = datetime.now()
         end_time = now + timedelta(minutes=max_wait_time)
 
@@ -2680,6 +2745,10 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                 else:
                     log.debug("Can't acquire lock on cluster %s", cluster_id)
                     locked_clusters.add(cluster_id)
+            elif bypass_pool_wait and not valid_clusters:
+                # Enter cluster creation queue. Once we exit, do nothing so we
+                # just re-enter the _find_cluster loop.
+                self.scheduling_queue.enter_cluster_creation_queue()
             elif max_wait_time == 0:
                 return None
             else:

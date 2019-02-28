@@ -427,6 +427,20 @@ _RUNNER_OPTS = dict(
             )),
         ],
     ),
+    bypass_pool_wait=dict(
+        switches=[
+            (['--bypass-pool-wait'], dict(
+                action='store_true',
+                help=('Ignores the pool wait time if there are no clusters'
+                      ' with a valid setup (only retry if there are clusters'
+                      ' in a running state.'),
+            )),
+            (['--no-bypass-pool-wait'], dict(
+                action='store_false',
+                help='Does not ignore the pool wait time.',
+            )),
+        ],
+    ),
     check_input_paths=dict(
         switches=[
             (['--check-input-paths'], dict(
