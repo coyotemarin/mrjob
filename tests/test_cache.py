@@ -41,6 +41,8 @@ def _describe_cluster(client, tmp_file, cluster_id, num):
 
 class CacheTestCase(MockBoto3TestCase):
 
+    running_states = ['STARTING', 'WAITING', 'RUNNING']
+
     def _create_cluster(self):
         return self.client.run_job_flow(
             Instances=dict(
@@ -53,6 +55,13 @@ class CacheTestCase(MockBoto3TestCase):
             ReleaseLabel='emr-5.0.0',
             ServiceRole='fake-service-role',
         )['JobFlowId']
+
+    def _terminate_cluster(self, cluster_id):
+        self.client.terminate_job_flows(
+            JobFlowIds=[
+                cluster_id
+            ],
+        )
 
     def setUp(self):
         super(CacheTestCase, self).setUp()
@@ -70,6 +79,7 @@ class CacheTestCase(MockBoto3TestCase):
         ClusterCache.setup(self.tmp_file)
         self.assertTrue(os.path.isfile(self.tmp_file))
         self.assertTrue(os.path.isfile(self.tmp_file + '.age_marker'))
+        self.assertTrue(os.path.isfile(self.tmp_file + '.list_marker'))
 
     def test_no_cachefile(self):
         """Tests that we no-op / call describe if there is no cache file."""
@@ -157,6 +167,77 @@ class CacheTestCase(MockBoto3TestCase):
         # now the cache should be back up-to-date thus no describe calls
         cache.describe_cluster(self.cluster_id)
         self.assertEqual(self.client.describe_cluster.calls, 2)
+
+    def test_list_basics(self):
+        """Tests the list cluster operation."""
+        ClusterCache.setup(self.tmp_file)
+        cache = ClusterCache(self.client, self.tmp_file, 5)
+        new_cluster_id = self._create_cluster()
+
+        # list everything, should be two describe calls
+        cache.list_clusters_and_populate_cache(self.running_states)
+        self.assertEqual(self.client.describe_cluster.calls, 2)
+
+        # now that the cache is populated new describes should not
+        # call describe
+        cache.describe_cluster(self.cluster_id)
+        cache.describe_cluster(new_cluster_id)
+        self.assertEqual(self.client.describe_cluster.calls, 2)
+
+        # re-listing should not re-describe clusters
+        cache.list_clusters_and_populate_cache(self.running_states)
+        self.assertEqual(self.client.describe_cluster.calls, 2)
+
+        # move lister-marker back 1 minute
+        stinfo = os.stat(self.tmp_file)
+        os.utime(self.tmp_file + '.list_marker',
+                 (stinfo.st_atime, stinfo.st_mtime - 60))
+
+        # re-listing should still not re-describe clusters since they are
+        # valid in the cache
+        cache.list_clusters_and_populate_cache(self.running_states)
+        self.assertEqual(self.client.describe_cluster.calls, 2)
+
+        # re-listing should now re-describe clusters now that the cache
+        # is empty
+        open(self.tmp_file, 'w+').close()
+        cache.list_clusters_and_populate_cache(self.running_states)
+        self.assertEqual(self.client.describe_cluster.calls, 4)
+
+    def test_list_changed_state(self):
+        """Tests that listing handles clusters that change state."""
+        ClusterCache.setup(self.tmp_file)
+        cache = ClusterCache(self.client, self.tmp_file, 5)
+        new_cluster_id = self._create_cluster()
+
+        # list everything, should be two describe calls and two clusters
+        results = cache.list_clusters_and_populate_cache(self.running_states)
+        self.assertEqual(self.client.describe_cluster.calls, 2)
+        self.assertEqual(len(results), 2)
+        for _, res in results.items():
+            self.assertEqual(res['Cluster']['Status']['State'], 'STARTING')
+
+        # terminate one cluster and set the other manually to be running
+        self._terminate_cluster(new_cluster_id)
+        self.mock_emr_clusters[self.cluster_id]['Status']['State'] = 'RUNNING'
+
+        # re-listing should not change anything
+        results = cache.list_clusters_and_populate_cache(self.running_states)
+        self.assertEqual(self.client.describe_cluster.calls, 2)
+        self.assertEqual(len(results), 2)
+
+        # move lister-marker back 1 minute
+        stinfo = os.stat(self.tmp_file)
+        os.utime(self.tmp_file + '.list_marker',
+                 (stinfo.st_atime, stinfo.st_mtime - 60))
+
+        # re-listing should still not re-describe clusters but will now
+        # only return one cluster and the state will be RUNNING
+        results = cache.list_clusters_and_populate_cache(self.running_states)
+        self.assertEqual(self.client.describe_cluster.calls, 2)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(
+            results[self.cluster_id]['Cluster']['Status']['State'], 'RUNNING')
 
     def test_locking(self):
         """Tests the basic locking functionality around the cache."""

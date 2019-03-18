@@ -22,7 +22,6 @@ from datetime import datetime
 from datetime import timedelta
 from urllib3.exceptions import HTTPError
 
-from mrjob.aws import _boto3_paginate
 from mrjob.compat import version_gte
 from mrjob.emr import _attempt_to_acquire_lock
 from mrjob.emr import _EMR_STATES_STARTING
@@ -237,6 +236,20 @@ class YarnEMRJobRunner(EMRJobRunner):
         Note: this will update pass-by-reference arguments `valid_clusters`
         and `invalid_clusters`.
 
+        Also note that we cache aggressively here. All cluster information is
+        cached, and moreover, we only re-list clusters every 30 seconds. It is
+        worth discussing the situation when a cluster is created and when one
+        is terminated. The former is not a problem since the pool wait loop
+        will eventually find the cluster. There is an issue towards the end of
+        the pool wait time but this is not a frequent situation, and would only
+        result in an extra cluster. The latter case of terminated clusters is
+        subtler and trickier. Luckily when we list clusters we get their state.
+        Therefore we only put entries back into the cache if they have a
+        waiting/running state. This means that a terminated cluster can only be
+        in the cache up to our frequency check time (30 seconds). In this case,
+        in the yarn runner, querying the yarn api will fail and skip over the
+        cluster. Therefore this situation should be ok.
+
         :param valid_clusters: A map of cluster id to cluster info with a valid
                                setup; thus we do not need to check their setup
                                again.
@@ -256,28 +269,24 @@ class YarnEMRJobRunner(EMRJobRunner):
         # list of (available_mb, cluster_id)
         cluster_list = []
 
-        for cluster_summary in _boto3_paginate(
-                'Clusters', emr_client, 'list_clusters',
-                ClusterStates=_EMR_STATUS_RUNNING):
-            cluster_id = cluster_summary['Id']
-
+        cluster_info_list = self.cluster_cache.\
+            list_clusters_and_populate_cache(_EMR_STATUS_RUNNING)
+        for cluster_id, cluster_info in cluster_info_list.items():
             # this may be a retry due to locked clusters
             if cluster_id in invalid_clusters or cluster_id in locked_clusters:
                 log.debug('    excluded')
                 continue
 
-            # if we haven't seen this cluster before then check the setup
-            cluster = valid_clusters.get(cluster_id, None)
-            if cluster is None:
-                cluster = self.cluster_cache.describe_cluster(cluster_id)
+            # only if we haven't seen this cluster before we check the setup
+            if cluster_id not in valid_clusters:
                 if not self._compare_cluster_setup(
-                        emr_client, cluster, req_pool_hash):
+                        emr_client, cluster_info, req_pool_hash):
                     invalid_clusters.add(cluster_id)
                     continue
-                valid_clusters[cluster_id] = cluster
+                valid_clusters[cluster_id] = cluster_info
 
             # always check the state
-            available_md = self._check_cluster_state(cluster['Cluster'],
+            available_md = self._check_cluster_state(cluster_info['Cluster'],
                                                      resource_constraints)
             if available_md == -1:
                 # don't add to invalid cluster list since the cluster may

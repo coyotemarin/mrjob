@@ -23,32 +23,39 @@ from mrjob.aws import _boto3_paginate
 
 log = logging.getLogger(__name__)
 
+# This defines how often to re-list clusters.
+_DEFAULT_CACHE_LIST_FREQUENCY_SECONDS = 30
+
 
 class ClusterCache(object):
     """Read-through file cache of cluster info to reduce EMR API calls.
 
-    We still hit the EMR API in
-        - :py:meth:`~mrjob.yarnemr.YarnEMRJobRunner._wait_for_cluster`
+    Note: we still hit the EMR API in
+        - :py:meth:`~mrjob.emr.EMRJobRunner._wait_for_cluster`
           (waiting for a cluster to spin up)
-        - :py:meth:`~mrjob.emr.EMRJobRunner._get_cluster_info
-          (creates in-memory "cache" of cluster info)`
+        - :py:meth:`~mrjob.emr.EMRJobRunner._get_cluster_info`
+          (creates in-memory "cache" of cluster info)
     """
-    def __init__(self, emr_client, cache_filepath, cache_file_ttl):
+    def __init__(self, emr_client, cache_filepath, cache_file_ttl,
+                 list_frequency=_DEFAULT_CACHE_LIST_FREQUENCY_SECONDS):
         """Init cluster cache.
 
         :param emr_client: boto3 EMR client to use for list and describe calls
         :param cache_filepath: absolute local path to the cluster cache
         :param cache_file_ttl: expire (truncate) the cache after this many days
+        :param list_frequency: list at most only every this many seconds
         """
         self._emr_client = emr_client
         self._cache_filepath = cache_filepath
         self._cache_file_ttl = cache_file_ttl
+        self._list_frequency = list_frequency
 
     @staticmethod
     def setup(cache_filepath):
         if not os.path.isfile(cache_filepath):
             open(cache_filepath, 'a').close()
             open(cache_filepath + '.age_marker', 'a').close()
+            open(cache_filepath + '.list_marker', 'a').close()
 
     @contextmanager
     def cache_mutex(self, mode):
@@ -65,8 +72,22 @@ class ClusterCache(object):
             self._fd.close()
             self._fd = None
 
-    def _is_empty(self):
-        return os.stat(self._cache_filepath).st_size == 0
+    def _load_cache(self, fd):
+        if os.stat(self._cache_filepath).st_size == 0:
+            return {}
+        else:
+            return json.load(fd)
+
+    def _dump_cache(self, content, fd, truncate):
+        # We must seek back to the beginning of the file before writing.
+        fd.seek(0)
+        if truncate:
+            fd.truncate()
+        json.dump(content, fd, default=str)
+
+    def _get_list_paginator(self, states):
+        return _boto3_paginate('Clusters', self._emr_client,
+                               'list_clusters', ClusterStates=states)
 
     def _emr_cluster_describe(self, cluster_id):
         """Describe the cluster and get the instance group/fleet info."""
@@ -91,11 +112,21 @@ class ClusterCache(object):
     def _handle_cache_expiry(self):
         age_marker_file = self._cache_filepath + '.age_marker'
         mtime = os.stat(age_marker_file).st_mtime
-        days_old = (datetime.now() - datetime.utcfromtimestamp(mtime)).days
+        days_old = (datetime.utcnow() - datetime.utcfromtimestamp(mtime)).days
         if days_old > self._cache_file_ttl:
             log.info('Cluster cache expired, truncating cache')
             open(age_marker_file, 'w').close()  # update mtime
             open(self._cache_filepath, 'w').close()  # truncate cache
+
+    def _should_list_and_populate(self):
+        list_marker_file = self._cache_filepath + '.list_marker'
+        mtime = os.stat(list_marker_file).st_mtime
+        seconds_old = (datetime.utcnow() -
+                       datetime.utcfromtimestamp(mtime)).seconds
+        if seconds_old > self._list_frequency:
+            open(list_marker_file, 'w').close()  # update mtime
+            return True
+        return False
 
     def describe_cluster(self, cluster_id):
         """Describes an EMR cluster from the given ID. Also describes and
@@ -113,26 +144,64 @@ class ClusterCache(object):
         with self.cache_mutex('r+') as fd:
             self._handle_cache_expiry()
 
-            # Get contents and check if the cluster id is present
-            if self._is_empty():
-                content = {}
-            else:
-                content = json.load(fd)
+            content = self._load_cache(fd)
+
+            # Check if the cluster id is present
             cluster = content.get(cluster_id, None)
             if cluster:
                 log.debug('Cluster cache hit: found cluster {}'
                           .format(cluster_id))
                 return cluster
-
             log.debug('Cluster cache miss: no entry for cluster {}'
                       .format(cluster_id))
 
             # If there is no cluster with this id we get the info from EMR
             content[cluster_id] = self._emr_cluster_describe(cluster_id)
 
-            # We must seek back to the beginning of the file before writing.
-            # There is no reason to truncate as the content will never shorten.
-            fd.seek(0)
-            json.dump(content, fd, default=str)
+            # There is no reason to truncate as the content will never shorten
+            self._dump_cache(content, fd, False)
 
             return content[cluster_id]
+
+    def list_clusters_and_populate_cache(self, states):
+        """Lists EMR clusters with specified state and populates the cache
+        with their info.
+
+        Only lists the clusters if the list marker file is older than the list
+        frequency. Only describes the cluster info if the ID does not exist in
+        the cache.
+
+        Additionally, we only put entries in the cache if their state matches
+        the specified state and update the state if it had changed. Therefore
+        this function may remove entries from the cache.
+        """
+        assert self._cache_filepath is not None, \
+            'This code requires the cluster cache to be present'
+
+        with self.cache_mutex('r+') as fd:
+
+            content = self._load_cache(fd)
+
+            # Check if we are updating the cache; if not just return the
+            # current cache contents. Always list if the cache is empty.
+            if content and not self._should_list_and_populate():
+                return content
+
+            # List all clusters with a valid state. For each of these clusters
+            # check if it is in the cache. If not describe it and add it to the
+            # cache. Otherwise ensure the state is up-to-date.
+            new_content = {}
+            for cluster_summary in self._get_list_paginator(states):
+                cluster_id = cluster_summary['Id']
+                cluster_info = content.get(cluster_id, None)
+                if cluster_info is None:
+                    cluster_info = self._emr_cluster_describe(cluster_id)
+                else:
+                    cluster_info['Cluster']['Status']['State'] = \
+                        cluster_summary['Status']['State']
+                new_content[cluster_id] = cluster_info
+
+            # We must truncate as the content may have shortened.
+            self._dump_cache(new_content, fd, True)
+
+            return new_content
