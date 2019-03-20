@@ -30,6 +30,7 @@ from mrjob.emr import _EMR_STATUS_TERMINATING
 from mrjob.emr import _make_lock_uri
 from mrjob.emr import _POOLING_SLEEP_INTERVAL
 from mrjob.emr import EMRJobRunner
+from mrjob.pool import _pool_hash_and_name
 from mrjob.step import _is_spark_step_type
 from mrjob.step import StepFailedException
 from mrjob.yarn_api import YarnResourceManager
@@ -64,6 +65,10 @@ _MAX_APPS_RUNNING = 40
 # multiple of the option `check_cluster_every` rounded down.
 _NEW_CLUSTER_WAIT_TIME = 1200  # 20 minutes
 
+# Re-enter the find cluster loop at most this many times after we are unable to
+# find / create a cluster. Once this limit is exceed we raise an exception.
+_MAX_FIND_RETRY_COUNT_FOR_POOL_CAP = 3
+
 
 class _ResourceConstraint(object):
     """Abstracts a constraint on a resource. Checks whether a metric value
@@ -96,6 +101,7 @@ class YarnEMRJobRunner(EMRJobRunner):
     OPT_NAMES = EMRJobRunner.OPT_NAMES | {
         'expected_cores',
         'expected_memory',
+        'max_pool_cluster_count',
         'yarn_logs_output_base'
     }
 
@@ -147,6 +153,11 @@ class YarnEMRJobRunner(EMRJobRunner):
                 'Properties': {scheduler_key: fair_scheduler}
             })
 
+    def _create_and_wait_for_cluster(self):
+        self._cluster_id = self._create_cluster()
+        self._created_cluster = True
+        self._wait_for_cluster()
+
     def _launch_yarn_emr_job(self):
         """Create an empty cluster on EMR if needed, sets self._cluster_id to
         the cluster's ID, and submits the job to the cluster via ssh.
@@ -158,28 +169,94 @@ class YarnEMRJobRunner(EMRJobRunner):
         """
         self._create_s3_tmp_bucket_if_needed()
 
-        # try to find a cluster from the pool
-        if (self._opts['pool_clusters'] and not self._cluster_id):
-            resource_constraints = [
-                _ResourceConstraint(operator.ge, 'availableVirtualCores',
-                                    self._opts['expected_cores']),
-                _ResourceConstraint(operator.ge, 'availableMB',
-                                    self._opts['expected_memory']),
-                _ResourceConstraint(operator.lt, 'appsPending',
-                                    _MAX_APPS_PENDING),
-                _ResourceConstraint(operator.lt, 'appsRunning',
-                                    _MAX_APPS_RUNNING)
-            ]
-            cluster_id = self._find_cluster(resource_constraints)
-            if cluster_id:
-                self._cluster_id = cluster_id
+        # Resource constraints for if we try to find a cluster
+        resource_constraints = [
+            _ResourceConstraint(operator.ge, 'availableVirtualCores',
+                                self._opts['expected_cores']),
+            _ResourceConstraint(operator.ge, 'availableMB',
+                                self._opts['expected_memory']),
+            _ResourceConstraint(operator.lt, 'appsPending',
+                                _MAX_APPS_PENDING),
+            _ResourceConstraint(operator.lt, 'appsRunning',
+                                _MAX_APPS_RUNNING)
+        ]
 
-        # create a cluster if we're not already using an existing one
-        if not self._cluster_id:
-            self._cluster_id = self._create_cluster(persistent=False)
-            self._created_cluster = True
-            self._wait_for_cluster()
-        else:
+        # Try to find a cluster (this is pretty much a while true loop since
+        # we break whenever we get a cluster id anyways).
+        attempt_count = 0
+        while not self._cluster_id:
+            attempt_count += 1
+
+            # If we are not pooling clusters then just create a new cluster
+            if not self._opts['pool_clusters']:
+                self._create_and_wait_for_cluster()
+                break
+
+            # Try to find a cluster, break if we find a valid cluster
+            find_cluster_ret = self._find_cluster(resource_constraints)
+            if find_cluster_ret:
+                self._cluster_id = find_cluster_ret
+                break
+
+            # If there is no max cluster count then create a cluster
+            if not self._opts['max_pool_cluster_count']:
+                self._create_and_wait_for_cluster()
+                break
+
+            # Max cluster limiting logic:
+
+            # Each time we enter this check force a re-list to ensure
+            # we are as up-to-date as possible.
+            cluster_up_states = _EMR_STATES_STARTING + _EMR_STATUS_RUNNING
+            cluster_info_list = self.cluster_cache.\
+                list_clusters_and_populate_cache(cluster_up_states, True)
+            pool_name_hash = (self._pool_hash(), self._opts['pool_name'],)
+            valid_cluster_count = sum(
+                pool_name_hash == _pool_hash_and_name(c['Cluster'])
+                for _, c in cluster_info_list.items()
+            )
+
+            if valid_cluster_count >= self._opts['max_pool_cluster_count']:
+                log.info('Cluster pool %s full, %d out of %d clusters',
+                         self._opts['pool_name'], valid_cluster_count,
+                         self._opts['max_pool_cluster_count'])
+
+            # Ideally if we are under the max pool cap then create a new.
+            # However is it possible other processes are at this state so we
+            # must lock on this cluster creation. We do so by constructing a
+            # lock unique to this pool and the number of valid clusters plus
+            # an attempt index. Note, there is another issue: it is possible
+            # a cluster goes down and we will have to re-create a cluster with
+            # this same number, so these locks need to expire at some point.
+            # The new cluster wait time is a reasonable expiry.
+            status = False
+            for i in range(valid_cluster_count + 1,
+                           self._opts['max_pool_cluster_count'] + 1):
+                log.info('Attempting to create cluster #%d', i)
+                lock_uri = self._creation_lock_uri('{}_{}'
+                                                   .format(*pool_name_hash), i)
+                status = _attempt_to_acquire_lock(
+                            self.fs, lock_uri,
+                            self._opts['cloud_fs_sync_secs'],
+                            self._job_key, _NEW_CLUSTER_WAIT_TIME)
+                if status:
+                    break
+            if status:
+                log.info('Grabbed lock, creating cluster #%d', i)
+                self._create_and_wait_for_cluster()
+                break
+
+            # If this is the last attempt then we fail the job run
+            if attempt_count == _MAX_FIND_RETRY_COUNT_FOR_POOL_CAP:
+                desc = 'Unable to find cluster within limit after 3 attempts.'
+                reason = ('Current cluster count ({}) >= max cluster'
+                          ' count ({})'
+                          .format(valid_cluster_count,
+                                  self._opts['max_pool_cluster_count']))
+                raise StepFailedException(step_desc=desc, reason=reason)
+        # </end of loop>
+
+        if not self._created_cluster:
             log.info('Adding our job to existing cluster %s (%s)' %
                      (self._cluster_id, self._address_of_master()))
 
@@ -197,9 +274,14 @@ class YarnEMRJobRunner(EMRJobRunner):
         self._prepare_for_launch()
         self._launch_yarn_emr_job()
 
-    def _lock_uri(self, cluster_id):
+    def _scheduling_lock_uri(self, cluster_id):
         """Lock unique per cluster"""
         return _make_lock_uri(self._opts['cloud_tmp_dir'], cluster_id, 'yarn')
+
+    def _creation_lock_uri(self, pool_name_hash, cluster_num):
+        """Lock unique per pool (name and hash) per cluster number"""
+        return _make_lock_uri(self._opts['cloud_tmp_dir'],
+                              pool_name_hash, cluster_num)
 
     def _check_cluster_state(self, cluster, resource_constraints):
         """Queries the cluster for basic metrics and checks these against
@@ -272,8 +354,9 @@ class YarnEMRJobRunner(EMRJobRunner):
         cluster_info_list = self.cluster_cache.\
             list_clusters_and_populate_cache(_EMR_STATUS_RUNNING)
         for cluster_id, cluster_info in cluster_info_list.items():
-            # this may be a retry due to locked clusters
-            if cluster_id in invalid_clusters or cluster_id in locked_clusters:
+
+            # ignore this cluster if the setup is invalid
+            if cluster_id in invalid_clusters:
                 log.debug('    excluded')
                 continue
 
@@ -285,6 +368,11 @@ class YarnEMRJobRunner(EMRJobRunner):
                     continue
                 valid_clusters[cluster_id] = cluster_info
 
+            # this may be a retry due to locked clusters; so skip it
+            if cluster_id in locked_clusters:
+                log.debug('    excluded')
+                continue
+
             # always check the state
             available_md = self._check_cluster_state(cluster_info['Cluster'],
                                                      resource_constraints)
@@ -293,7 +381,6 @@ class YarnEMRJobRunner(EMRJobRunner):
                 # be valid when we next check
                 continue
 
-            # yay this cluster is good!
             cluster_list.append((available_md, cluster_id,))
 
         return [_id for _, _id in sorted(cluster_list, reverse=True)]
@@ -302,8 +389,7 @@ class YarnEMRJobRunner(EMRJobRunner):
         """Find a cluster that can host this runner. Prefer clusters with
         more memory.
 
-        Return ``None`` if no suitable clusters exist after waiting
-        ``pool_wait_minutes``.
+        Return a cluster id if a cluster is found, otherwise None.
         """
         valid_clusters = {}
         invalid_clusters = set()
@@ -311,6 +397,7 @@ class YarnEMRJobRunner(EMRJobRunner):
 
         max_wait_time = self._opts['pool_wait_minutes']
         bypass_pool_wait = self._opts['bypass_pool_wait']
+
         now = datetime.now()
         end_time = now + timedelta(minutes=max_wait_time)
 
@@ -320,17 +407,18 @@ class YarnEMRJobRunner(EMRJobRunner):
             # for more than `_LOCK_TIMEOUT` seconds
             locked_clusters = [(c, t) for (c, t) in locked_clusters
                                if now - t < timedelta(seconds=_LOCK_TIMEOUT)]
-            cluster_info_list = self._usable_clusters(
+            target_cluster_list = self._usable_clusters(
                 valid_clusters, invalid_clusters,
                 {l[0] for l in locked_clusters}, resource_constraints)
-            log.debug('  Found %d usable clusters%s%s', len(cluster_info_list),
-                      ': ' if cluster_info_list else '',
-                      ', '.join(c for c in cluster_info_list))
+            log.debug('  Found %d usable clusters%s%s',
+                      len(target_cluster_list),
+                      ': ' if target_cluster_list else '',
+                      ', '.join(c for c in target_cluster_list))
 
-            if cluster_info_list:
-                for cluster_id in cluster_info_list:
+            if target_cluster_list:
+                for cluster_id in target_cluster_list:
                     status = _attempt_to_acquire_lock(
-                        self.fs, self._lock_uri(cluster_id),
+                        self.fs, self._scheduling_lock_uri(cluster_id),
                         self._opts['cloud_fs_sync_secs'], self._job_key,
                         _LOCK_TIMEOUT)
                     if status:

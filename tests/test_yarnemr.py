@@ -18,6 +18,7 @@ import os
 import boto3
 
 from mrjob.yarnemr import YarnEMRJobRunner
+from mrjob.step import StepFailedException
 
 from tests.mock_boto3 import MockBoto3TestCase
 from tests.mr_null_spark import MRNullSpark
@@ -103,7 +104,7 @@ class YarnEMRJobRunnerEndToEndTestCase(YarnEMRJobRunnerTestBase):
 
 class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
 
-    def _create_cluster(self):
+    def _create_cluster(self, *args, **kwargs):
         return self.client.run_job_flow(
             Instances=dict(
                 InstanceCount=1,
@@ -114,6 +115,12 @@ class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
             Name='Development Cluster',
             ReleaseLabel='emr-5.0.0',
             ServiceRole='fake-service-role',
+            Tags=[
+                {'Key': '__mrjob_pool_name',
+                 'Value': 'default'},
+                {'Key': '__mrjob_pool_hash',
+                 'Value': 'e3ecc44fbee4b6a84187dbcd45f758b0'}
+            ]
         )['JobFlowId']
 
     def _setup_mocked_runner(self, setup_ret_val, state_ret_val):
@@ -121,6 +128,7 @@ class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
         runner = YarnEMRJobRunner()
         # don't try to create/wait for a cluster
         runner._create_cluster = Mock()
+        runner._create_cluster.side_effect = self._create_cluster
         runner._wait_for_cluster = Mock()
         # mock out stuff that is run after cluster management we
         # don't care about
@@ -175,3 +183,64 @@ class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
 
         # ensure we created a new cluster
         self.assertTrue(runner._created_cluster)
+
+    def test_under_max_cluster_limit(self):
+        self._default_mrjob_setup(max_pool_cluster_count=3)
+
+        # create clusters and manually set them to WAITING
+        cluster_ids = []
+        for _ in range(2):
+            cluster_id = self._create_cluster()
+            self.mock_emr_clusters[cluster_id]['Status']['State'] = 'WAITING'
+            cluster_ids.append(cluster_id)
+
+        # mark all clusters as valid but in an invalid state
+        runner = self._setup_mocked_runner(True, False)
+
+        # launch the job
+        runner._launch_yarn_emr_job()
+
+        # ensure we created a new cluster
+        self.assertTrue(runner._created_cluster)
+
+    def test_over_max_cluster_limit(self):
+        self._default_mrjob_setup(max_pool_cluster_count=2)
+
+        # create clusters and manually set them to WAITING
+        cluster_ids = []
+        for _ in range(2):
+            cluster_id = self._create_cluster()
+            self.mock_emr_clusters[cluster_id]['Status']['State'] = 'WAITING'
+            cluster_ids.append(cluster_id)
+
+        # mark all clusters as valid but in an invalid state
+        runner = self._setup_mocked_runner(True, False)
+
+        # launch the job and ensure we hit an exception
+        with self.assertRaises(StepFailedException):
+            runner._launch_yarn_emr_job()
+
+        # ensure we didn't creat a new cluster
+        self.assertFalse(runner._created_cluster)
+
+    def test_retry_max_cluster_limit(self):
+        self._default_mrjob_setup(max_pool_cluster_count=2)
+
+        # create clusters and manually set them to WAITING
+        cluster_ids = []
+        for _ in range(2):
+            cluster_id = self._create_cluster()
+            self.mock_emr_clusters[cluster_id]['Status']['State'] = 'WAITING'
+            cluster_ids.append(cluster_id)
+
+        # mark all clusters as valid but in an invalid state
+        runner = self._setup_mocked_runner(True, False)
+
+        # return a valid cluster on the second iterations
+        runner._check_cluster_state.side_effect = [False]*2 + [True]*2
+
+        # launch the job and ensure we hit an exception
+        runner._launch_yarn_emr_job()
+
+        # ensure we didn't creat a new cluster
+        self.assertFalse(runner._created_cluster)

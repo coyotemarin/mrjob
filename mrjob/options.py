@@ -993,6 +993,21 @@ _RUNNER_OPTS = dict(
             )),
         ],
     ),
+    max_pool_cluster_count=dict(
+        switches=[
+            (['--max-pool-cluster-count'], dict(
+                help=("For each cluster in this cluster's pool (i.e. matching"
+                      " pool name and pool hash, ensure we never create more"
+                      " than this many clusters. If we reach this cap and no"
+                      " valid clusters are available, we re-entry the"
+                      " discovery loop a maximum of 3 times. If we are still"
+                      " unable to find/create a cluster we fail. Note: this"
+                      " is only currently available for the YARN EMR runner."
+                      ),
+                type=int,
+            )),
+        ],
+    ),
     max_mins_idle=dict(
         cloud_role='launch',
         switches=[

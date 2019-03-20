@@ -163,7 +163,7 @@ class ClusterCache(object):
 
             return content[cluster_id]
 
-    def list_clusters_and_populate_cache(self, states):
+    def list_clusters_and_populate_cache(self, states, force_relist=False):
         """Lists EMR clusters with specified state and populates the cache
         with their info.
 
@@ -184,7 +184,8 @@ class ClusterCache(object):
 
             # Check if we are updating the cache; if not just return the
             # current cache contents. Always list if the cache is empty.
-            if content and not self._should_list_and_populate():
+            if content and not (self._should_list_and_populate() or
+                                force_relist):
                 return content
 
             # List all clusters with a valid state. For each of these clusters
