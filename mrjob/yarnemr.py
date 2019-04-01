@@ -587,8 +587,9 @@ class YarnEMRJobRunner(EMRJobRunner):
         # The application ID appears in several places in these logs, but we
         # choose to take it from the log-line where we submit the application
         # to the YARN resource manager
-        self._appid = re.search('Submitting application (application[0-9_]*)'
-                                ' to ResourceManager', stderr).groups()[0]
+        app_search = re.search(b'Submitting application (application[0-9_]*)'
+                               b' to ResourceManager', stderr)
+        self._appid = app_search.groups()[0].decode('utf-8')
         log.info('Application successfully submitted with application id'
                  ' %s', self._appid)
 

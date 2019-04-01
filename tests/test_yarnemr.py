@@ -24,6 +24,7 @@ from tests.mock_boto3 import MockBoto3TestCase
 from tests.mr_null_spark import MRNullSpark
 from tests.py2 import Mock
 from tests.py2 import patch
+from tests.py2 import PY2
 from tests.sandbox import mrjob_conf_patcher
 
 
@@ -79,8 +80,8 @@ class YarnEMRJobRunnerEndToEndTestCase(YarnEMRJobRunnerTestBase):
 
             # mock ssh
             runner.fs._ssh_run = Mock()
-            mock_stderr = 'whooo stderr Submitting application application_15'\
-                          '50537538614_0001 to ResourceManager stderr logs'
+            mock_stderr = b'whooo stderr Submitting application application_1'\
+                          b'550537538614_0001 to ResourceManager stderr logs'
             runner.fs._ssh_run.return_value = ('meh stdour', mock_stderr)
 
             runner._get_application_info = Mock()
@@ -119,7 +120,8 @@ class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
                 {'Key': '__mrjob_pool_name',
                  'Value': 'default'},
                 {'Key': '__mrjob_pool_hash',
-                 'Value': 'e3ecc44fbee4b6a84187dbcd45f758b0'}
+                 'Value': '07b8041374af73b32d93aa6e87213ddf' if PY2 else
+                          'a791edd20463b0e10558f9d3884f5b59'}
             ]
         )['JobFlowId']
 
@@ -134,7 +136,7 @@ class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
         # don't care about
         runner._address_of_master = Mock()
         runner.get_image_version = Mock()
-        runner.get_image_version.return_value = 'meh'
+        runner.get_image_version.return_value = '5.0.0'
         runner._execute_job = Mock()
         # mock out setup and state methods to always return true
         runner._compare_cluster_setup = Mock()
