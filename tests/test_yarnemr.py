@@ -218,6 +218,12 @@ class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
         # mark all clusters as valid but in an invalid state
         runner = self._setup_mocked_runner(True, False)
 
+        for cluster in cluster_ids:
+            tags = self.mock_emr_clusters[cluster]['Tags']
+            for tag in tags:
+                if tag['Key'] == '__mrjob_pool_hash':
+                    tag['Value'] = runner._pool_hash()
+
         # launch the job and ensure we hit an exception
         with self.assertRaises(StepFailedException):
             runner._launch_yarn_emr_job()

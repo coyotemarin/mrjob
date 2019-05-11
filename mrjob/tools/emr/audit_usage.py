@@ -68,7 +68,7 @@ from mrjob.pool import _pool_hash_and_name
 from mrjob.util import strip_microseconds
 
 # match an mrjob job key (used to uniquely identify the job)
-_JOB_KEY_RE = re.compile(r'^(.*)\.(.*)\.(\d+)\.(\d+)\.(\d+)$')
+_JOB_KEY_RE = re.compile(r'^([^\.]*)\.([^\.]*)\.(\d+)\.(\d+)\.(\d+).*$')
 
 # match an mrjob step name (these are used to name steps in EMR)
 _STEP_NAME_RE = re.compile(
