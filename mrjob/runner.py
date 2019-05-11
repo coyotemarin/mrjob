@@ -27,6 +27,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import uuid
 
 from mrjob.compat import translate_jobconf
 from mrjob.compat import translate_jobconf_dict
@@ -698,7 +699,7 @@ class MRJobRunner(object):
 
     def get_job_key(self):
         """Get the unique key for the job run by this runner.
-        This has the format ``label.owner.date.time.microseconds``
+        This has the format ``label.owner.date.time.microseconds.uuid``
         """
         return self._job_key
 
@@ -764,9 +765,11 @@ class MRJobRunner(object):
             owner = self._owner()
 
         now = datetime.datetime.utcnow()
-        return '%s.%s.%s.%06d' % (
+        unique = str(uuid.uuid4())
+        return '%s.%s.%s.%06d.%s' % (
             label, owner,
-            now.strftime('%Y%m%d.%H%M%S'), now.microsecond)
+            now.strftime('%Y%m%d.%H%M%S'), now.microsecond,
+            unique)
 
     def _label(self):
         """Return *label* opt, or if not set, the name of the file

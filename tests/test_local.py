@@ -154,7 +154,7 @@ class NumCoresTestCase(SandboxedTestCase):
 
 
 # TODO: these belong in tests of the sim runner
-class TestsToPort:
+class TestsToPort(SandboxedTestCase):
 
     def test_end_to_end_multiple_tasks(self):
         # read from STDIN, a regular file, and a .gz
@@ -193,119 +193,6 @@ class TestsToPort:
         self.assertEqual(sorted(results),
                          [(1, 'qux'), (2, 'bar'), (2, 'foo'), (5, None)])
 
-    def test_get_file_splits_test(self):
-        # set up input paths
-        input_path = join(self.tmp_dir, 'input')
-        with open(input_path, 'w') as input_file:
-            input_file.write('bar\nqux\nfoo\nbar\nqux\nfoo\n')
-
-        input_path2 = join(self.tmp_dir, 'input2')
-        with open(input_path2, 'wb') as input_file:
-            input_file.write(b'foo\nbar\nbar\n')
-
-        runner = LocalMRJobRunner(conf_paths=[])
-
-        # split into 3 files
-        file_splits = runner._get_file_splits([input_path, input_path2], 3)
-
-        # make sure we get 3 files
-        self.assertEqual(len(file_splits), 3)
-
-        # make sure all the data is preserved
-        content = []
-        for file_name in file_splits:
-            with open(file_name, 'rb') as f:
-                content.extend(f.readlines())
-
-        self.assertEqual(sorted(content),
-                         [b'bar\n', b'bar\n', b'bar\n', b'bar\n', b'foo\n',
-                          b'foo\n', b'foo\n', b'qux\n', b'qux\n'])
-
-    def test_get_file_splits_sorted_test(self):
-        # set up input paths
-        input_path = join(self.tmp_dir, 'input')
-        with open(input_path, 'wb') as input_file:
-            input_file.write(
-                b'1\tbar\n1\tbar\n1\tbar\n2\tfoo\n2\tfoo\n2\tfoo\n3\tqux\n'
-                b'3\tqux\n3\tqux\n')
-
-        runner = LocalMRJobRunner(conf_paths=[])
-
-        file_splits = runner._get_file_splits([input_path], 3,
-                                              keep_sorted=True)
-
-        # make sure we get 3 files
-        self.assertEqual(len(file_splits), 3)
-
-        # make sure all the data is preserved in sorted order
-        content = []
-        for file_name in sorted(file_splits.keys()):
-            with open(file_name, 'rb') as f:
-                content.extend(f.readlines())
-
-        self.assertEqual(content,
-                         [b'1\tbar\n', b'1\tbar\n', b'1\tbar\n',
-                          b'2\tfoo\n', b'2\tfoo\n', b'2\tfoo\n',
-                          b'3\tqux\n', b'3\tqux\n', b'3\tqux\n'])
-
-    def gz_test(self, dir_path_name):
-        contents_gz = [b'bar\n', b'qux\n', b'foo\n', b'bar\n',
-                       b'qux\n', b'foo\n']
-        contents_normal = [b'foo\n', b'bar\n', b'bar\n']
-        all_contents_sorted = sorted(contents_gz + contents_normal)
-
-        input_gz_path = join(dir_path_name, 'input.gz')
-        input_gz = gzip.GzipFile(input_gz_path, 'wb')
-        input_gz.write(b''.join(contents_gz))
-        input_gz.close()
-        input_path2 = join(dir_path_name, 'input2')
-        with open(input_path2, 'wb') as input_file:
-            input_file.write(b''.join(contents_normal))
-
-        runner = LocalMRJobRunner(conf_paths=[])
-
-        # split into 3 files
-        file_splits = runner._get_file_splits([input_gz_path, input_path2], 3)
-
-        # Make sure that input.gz occurs in a single split that starts at
-        # its beginning and ends at its end
-        for split_info in file_splits.values():
-            if split_info['orig_name'] == input_gz_path:
-                self.assertEqual(split_info['start'], 0)
-                self.assertEqual(split_info['length'],
-                                 os.stat(input_gz_path)[stat.ST_SIZE])
-
-        # make sure we get 3 files
-        self.assertEqual(len(file_splits), 3)
-
-        # make sure all the data is preserved
-        content = []
-        for file_name in file_splits:
-            with open(file_name, 'rb') as f:
-                lines = list(to_lines(decompress(f, file_name)))
-
-            # make sure the input_gz split got its entire contents
-            if file_name == input_gz_path:
-                self.assertEqual(lines, contents_gz)
-
-            content.extend(lines)
-
-        self.assertEqual(sorted(content),
-                         all_contents_sorted)
-
-    def test_dont_split_gz(self):
-        self.gz_test(self.tmp_dir)
-
-    def test_relative_gz_path(self):
-        current_directory = os.getcwd()
-
-        def change_back_directory():
-            os.chdir(current_directory)
-
-        self.addCleanup(change_back_directory)
-        os.chdir(self.tmp_dir)
-        self.gz_test('')
-
     def test_multi_step_counters(self):
         stdin = BytesIO(b'foo\nbar\n')
 
@@ -319,29 +206,6 @@ class TestsToPort:
                              [{'group': {'counter_name': 2}},
                               {'group': {'counter_name': 2}},
                               {'group': {'counter_name': 2}}])
-
-    def test_gz_split_regression(self):
-        gz_path_1 = join(self.tmp_dir, '1.gz')
-        gz_path_2 = join(self.tmp_dir, '2.gz')
-        path_3 = join(self.tmp_dir, '3')
-
-        input_gz_1 = gzip.GzipFile(gz_path_1, 'wb')
-        input_gz_1.write(b'x\n')
-        input_gz_1.close()
-
-        input_gz_2 = gzip.GzipFile(gz_path_2, 'wb')
-        input_gz_2.write(b'y\n')
-        input_gz_2.close()
-
-        with open(path_3, 'wb') as f:
-            f.write(b'z')
-
-        mr_job = MRCountingJob(['--no-conf', '-r', 'local', gz_path_1,
-                               gz_path_2, path_3])
-        with mr_job.make_runner() as r:
-            splits = r._get_file_splits([gz_path_1, gz_path_2, path_3], 1)
-            self.assertEqual(
-                len(set(s['task_num'] for s in splits.values())), 3)
 
 
 class LocalMRJobRunnerNoSymlinksTestCase(LocalMRJobRunnerEndToEndTestCase):

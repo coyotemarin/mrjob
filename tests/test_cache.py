@@ -69,6 +69,7 @@ class CacheTestCase(MockBoto3TestCase):
         self.client = boto3.client('emr')
         self.tmp_file = os.path.join(tempfile.mkdtemp(), 'cache')
         self.cluster_id = self._create_cluster()
+        self.client.describe_cluster.__func__.calls = 0
 
     def tearDown(self):
         self.client.describe_cluster.__func__.calls = 0
