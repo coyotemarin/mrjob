@@ -63,7 +63,9 @@ only join clusters whose fleets use the same set of instances or a subset;
 there is no concept of "better" instances.
 
 mrjob's pooling won't add more than 1000 steps to a cluster, as the
-EMR API won't show more than this many steps. (For `very old AMIs <http://docs.aws.amazon.com/ElasticMapReduce/latest/DeveloperGuide/AddingStepstoaJobFlow.html>`__
+EMR API won't show more than this many steps. This behavior can be overridden
+using the :mrjob-opt:`no_steps_limit` in versions that support unlimited steps.
+(For `very old AMIs <http://docs.aws.amazon.com/ElasticMapReduce/latest/DeveloperGuide/AddingStepstoaJobFlow.html>`__
 there is a stricter limit of 256 steps).
 
 :py:mod:`mrjob` also uses an S3-based

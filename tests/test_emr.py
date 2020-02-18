@@ -1879,7 +1879,7 @@ class MasterNodeSetupScriptTestCase(MockBoto3TestCase):
         self.assertIsNotNone(runner._master_node_setup_script_path)
 
         with open(runner._master_node_setup_script_path, 'rb') as f:
-            contents = f.read()
+            contents = f.read().decode("utf-8")
 
         expected_contents = '  COW=MOO\n  CAT=MEOW\n' \
                             '  echo "$COW"\n  echo "$CAT"\n'

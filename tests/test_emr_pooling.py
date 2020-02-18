@@ -1536,6 +1536,25 @@ class PoolMatchingTestCase(MockBoto3TestCase):
             '-r', 'emr', '-v', '--pool-clusters'],
             job_class=MRTwoStepJob)
 
+    def test_available_no_steps_limit(self):
+        dummy_runner, cluster_id = self.make_pooled_cluster()
+
+        # fill the cluster
+        self.mock_emr_clusters[cluster_id]['_Steps'] = 999 * [
+            dict(
+                ActionOnFailure='CANCEL_AND_WAIT',
+                Config=dict(Args=[]),
+                Id='s-FAKE',
+                Name='dummy',
+                Status=dict(
+                    State='COMPLETED'))
+        ]
+
+        # adding a two-step job should be fine
+        self.assertJoins(cluster_id, [
+            '-r', 'emr', '-v', '--pool-clusters', '--no-steps-limit'],
+            job_class=MRTwoStepJob)
+
     def test_join_almost_full_cluster(self):
         dummy_runner, cluster_id = self.make_pooled_cluster()
 
@@ -1578,6 +1597,28 @@ class PoolMatchingTestCase(MockBoto3TestCase):
         self.assertDoesNotJoin(cluster_id, [
             '-r', 'emr', '-v', '--pool-clusters',
             '--image-version', '2.4.7'],
+            job_class=MRTwoStepJob)
+
+    def test_dont_join_full_cluster_256_no_steps_limit(self):
+        dummy_runner, cluster_id = self.make_pooled_cluster(
+            image_version='2.4.7')
+
+        # fill the cluster
+        self.mock_emr_clusters[cluster_id]['_Steps'] = 255 * [
+            dict(
+                ActionOnFailure='CANCEL_AND_WAIT',
+                Config=dict(Args=[]),
+                Id='s-FAKE',
+                Name='dummy',
+                Status=dict(
+                    State='COMPLETED'))
+        ]
+
+        # adding a two-step job should be fine
+        self.assertDoesNotJoin(cluster_id, [
+            '-r', 'emr', '-v', '--pool-clusters',
+            '--image-version', '2.4.7',
+            '--no-steps-limit'],
             job_class=MRTwoStepJob)
 
     def test_join_almost_full_2_x_ami_cluster(self):
@@ -1661,6 +1702,39 @@ class PoolMatchingTestCase(MockBoto3TestCase):
 
         self.assertDoesNotJoin(cluster_id,
                                ['-r', 'emr', '--pool-clusters'])
+
+    def test_dont_join_idle_with_pending_steps_no_steps_limit(self):
+        dummy_runner, cluster_id = self.make_pooled_cluster()
+
+        cluster = self.mock_emr_clusters[cluster_id]
+
+        cluster['_Steps'] = [
+            dict(
+                ActionOnFailure='CANCEL_AND_WAIT',
+                Config=dict(Args=[]),
+                Name='dummy',
+                Status=dict(State='PENDING'))]
+        cluster['_DelayProgressSimulation'] = 100  # keep step PENDING
+
+        self.assertDoesNotJoin(cluster_id,
+                               ['-r', 'emr', '--pool-clusters',
+                                '--no-steps-limit'])
+
+    def test_dont_join_idle_with_running_steps_no_steps_limit(self):
+        dummy_runner, cluster_id = self.make_pooled_cluster()
+
+        cluster = self.mock_emr_clusters[cluster_id]
+
+        cluster['_Steps'] = [
+            dict(
+                ActionOnFailure='CANCEL_AND_WAIT',
+                Config=dict(Args=[]),
+                Name='dummy',
+                Status=dict(State='RUNNING'))]
+
+        self.assertDoesNotJoin(cluster_id,
+                               ['-r', 'emr', '--pool-clusters',
+                                '--no-steps-limit'])
 
     def test_do_join_idle_with_cancelled_steps(self):
         dummy_runner, cluster_id = self.make_pooled_cluster()
