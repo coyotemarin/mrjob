@@ -34,6 +34,7 @@ try:
             'boto3>=1.4.6',
             'botocore>=1.6.0',
             'PyYAML>=3.08',
+            'requests',  # required for Affirm fork
         ],
         'provides': ['mrjob'],
         'test_suite': 'tests',
@@ -49,6 +50,13 @@ try:
     if sys.version_info >= (3, 0):
         setuptools_kwargs['extras_require']['rapidjson'] = ['rapidjson']
         setuptools_kwargs['tests_require'].append('rapidjson')
+
+    # don't try to install latest PyYAML on Python 3.4
+    if sys.version_info[:2] == (3, 4):
+        setuptools_kwargs['install_requires'] = [
+            ir + ',<5.2' if ir.startswith('PyYAML') else ir
+            for ir in setuptools_kwargs['install_requires']
+        ]
 
 except ImportError:
     from distutils.core import setup

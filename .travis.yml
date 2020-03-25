@@ -16,6 +16,7 @@ matrix:
   fast_finish: true
 install:
   - "pip install ."
+  - "pip install -e .[google]"
   - "pip install ujson warcio"
   - "pip install rapidjson || true"
 # command to run tests
