@@ -34,6 +34,7 @@ try:
             'boto3>=1.4.6',
             'botocore>=1.6.0',
             'PyYAML>=3.08',
+            'requests',  # required for Affirm fork
         ],
         'provides': ['mrjob'],
         'test_suite': 'tests',
