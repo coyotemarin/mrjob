@@ -3,8 +3,8 @@
 # Copyright 2012 Yelp
 # Copyright 2013 Yelp and Lyft
 # Copyright 2014 Marc Abramowitz
-# Copyright 2015-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,23 +24,35 @@ import os.path
 from os.path import exists
 from os.path import join
 from io import BytesIO
+from unittest import skipIf
 
 from warcio.warcwriter import WARCWriter
 
+try:
+    import pyspark
+except ImportError:
+    pyspark = None
+
 from mrjob.examples.mr_phone_to_url import MRPhoneToURL
+from mrjob.examples.mr_spark_wordcount import MRSparkWordcount
+from mrjob.examples.mr_spark_wordcount_script import MRSparkScriptWordcount
+from mrjob.examples.mr_sparkaboom import MRSparKaboom
 from mrjob.inline import InlineMRJobRunner
 from mrjob.job import MRJob
+from mrjob.util import safeeval
+from mrjob.util import to_lines
 
 from tests.examples.test_mr_phone_to_url import write_conversion_record
+from tests.job import run_job
 from tests.mr_cmd_job import MRCmdJob
 from tests.mr_filter_job import MRFilterJob
-from tests.mr_null_spark import MRNullSpark
 from tests.mr_test_cmdenv import MRTestCmdenv
 from tests.mr_two_step_job import MRTwoStepJob
+from tests.py2 import patch
 from tests.sandbox import EmptyMrjobConfTestCase
 from tests.sandbox import SandboxedTestCase
-from tests.job import run_job
-from tests.py2 import patch
+from tests.sandbox import SingleSparkContextTestCase
+from tests.mr_spark_os_walk import MRSparkOSWalk
 from tests.test_sim import MRIncrementerJob
 
 
@@ -241,9 +253,78 @@ class UnsupportedStepsTestCase(SandboxedTestCase):
 
         self.assertRaises(NotImplementedError, job.make_runner)
 
-    def test_no_spark_steps(self):
+    def test_no_spark_script_steps(self):
         # just a sanity check; _STEP_TYPES is tested in a lot of ways
-        job = MRNullSpark(['-r', 'inline'])
+        job = MRSparkScriptWordcount(['-r', 'inline'])
         job.sandbox()
 
         self.assertRaises(NotImplementedError, job.make_runner)
+
+
+@skipIf(pyspark is None, 'no pyspark module')
+class InlineRunnerSparkTestCase(SandboxedTestCase, SingleSparkContextTestCase):
+
+    def test_spark_mrjob(self):
+        text = b'one fish\ntwo fish\nred fish\nblue fish\n'
+
+        job = MRSparkWordcount(['-r', 'inline'])
+        job.sandbox(stdin=BytesIO(text))
+
+        counts = {}
+
+        with job.make_runner() as runner:
+            runner.run()
+
+            for line in to_lines(runner.cat_output()):
+                k, v = safeeval(line)
+                counts[k] = v
+
+        self.assertEqual(counts, dict(
+            blue=1, fish=4, one=1, red=1, two=1))
+
+    def test_spark_job_failure(self):
+        job = MRSparKaboom(['-r', 'inline'])
+        job.sandbox(stdin=BytesIO(b'line\n'))
+
+        from py4j.protocol import Py4JJavaError
+
+        with job.make_runner() as runner:
+            self.assertRaises(Py4JJavaError, runner.run)
+
+    def test_upload_files_with_rename(self):
+        # see test_upload_files_with_rename() in test_local for comparison
+
+        fish_path = self.makefile('fish', b'salmon')
+        fowl_path = self.makefile('fowl', b'goose')
+
+        # --use-driver-cwd gets around issues with the shared JVM not changing
+        # executors' working directory to match the driver on local master
+        job = MRSparkOSWalk(['-r', 'inline',
+                             '--use-driver-cwd',
+                             '--file', fish_path + '#ghoti',
+                             '--file', fowl_path])
+        job.sandbox()
+
+        file_sizes = {}
+
+        with job.make_runner() as runner:
+            runner.run()
+
+            # there is no working dir mirror in inline mode; inline
+            # mode simulates the working dir itself
+            wd_mirror = runner._wd_mirror()
+            self.assertIsNone(wd_mirror)
+
+            for line in to_lines(runner.cat_output()):
+                path, size = safeeval(line)
+                file_sizes[path] = size
+
+        # check that files were uploaded to working dir
+        self.assertIn('fowl', file_sizes)
+        self.assertEqual(file_sizes['fowl'], 5)
+
+        self.assertIn('ghoti', file_sizes)
+        self.assertEqual(file_sizes['ghoti'], 6)
+
+        # fish was uploaded as "ghoti"
+        self.assertNotIn('fish', file_sizes)

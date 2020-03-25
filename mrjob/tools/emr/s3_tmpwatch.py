@@ -1,6 +1,7 @@
 # Copyright 2010-2012 Yelp
 # Copyright 2013 David Marin and Steve Johnson
 # Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -84,7 +85,7 @@ def _s3_cleanup(glob_path, time_old, dry_run=False, **runner_kwargs):
     log.info('Deleting all files in %s that are older than %s' %
              (glob_path, time_old))
 
-    for path, key in runner.fs._ls(glob_path):
+    for path, key in runner.fs.s3._ls(glob_path):
         age = _boto3_now() - key.last_modified
         if age > time_old:
             # Delete it

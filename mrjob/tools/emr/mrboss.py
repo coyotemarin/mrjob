@@ -1,5 +1,6 @@
 # Copyright 2009-2012 Yelp
 # Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -118,7 +119,7 @@ def _run_on_all_nodes(runner, output_dir, cmd_args, print_stderr=True):
 
     for addr in addresses:
 
-        stdout, stderr = runner.fs._ssh_run(addr, cmd_args)
+        stdout, stderr = runner.fs.ssh._ssh_run(addr, cmd_args)
 
         if print_stderr:
             print('---')

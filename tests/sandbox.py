@@ -1,7 +1,7 @@
 # Copyright 2009-2012 Yelp and Contributors
 # Copyright 2013 David Marin
-# Copyright 2015-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,12 +23,22 @@ from contextlib import contextmanager
 from tempfile import mkdtemp
 from shutil import rmtree
 from unittest import TestCase
+from unittest import skipIf
+from warnings import filterwarnings
+
+try:
+    import pyspark
+except ImportError:
+    pyspark = None
 
 import mrjob
 from mrjob import runner
+from mrjob.py2 import PY2
 from mrjob.util import NullHandler
 
 from tests.py2 import patch
+from tests.py2 import MagicMock
+from tests.py2 import ResourceWarning
 
 
 # simple config that also silences 'no config options for runner' logging
@@ -172,6 +182,50 @@ class SandboxedTestCase(EmptyMrjobConfTestCase):
         """
         os.environ['PYTHONPATH'] = (
             mrjob_pythonpath() + ':' + os.environ.get('PYTHONPATH', ''))
+
+
+@skipIf(pyspark is None, 'no pyspark module')
+class SingleSparkContextTestCase(BasicTestCase):
+    """Only create a single SparkContext, to speed things up and prevent
+    errors from attempting to instantiate multiple contexts."""
+
+    @classmethod
+    def setUpClass(cls):
+        super(SingleSparkContextTestCase, cls).setUpClass()
+
+        if not PY2:
+            # ignore Python 3 warnings about unclosed filehandles
+            filterwarnings('ignore', category=ResourceWarning)
+
+        from pyspark import SparkContext
+        cls.spark_context = SparkContext()
+
+        # move stop() so that scripts can't call it
+        cls.spark_context.really_stop = cls.spark_context.stop
+        cls.spark_context.stop = MagicMock()
+
+        try:
+            cls.spark_context.setLogLevel('FATAL')
+        except:
+            # tearDownClass() won't be called if there's an exception
+            cls.spark_context.really_stop()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        if not PY2:
+            # ignore Python 3 warnings about unclosed filehandles
+            filterwarnings('ignore', category=ResourceWarning)
+
+        cls.spark_context.really_stop()
+
+        super(SingleSparkContextTestCase, cls).tearDownClass()
+
+    def setUp(self):
+        super(SingleSparkContextTestCase, self).setUp()
+
+        self.start(patch('pyspark.SparkContext',
+                         return_value=self.spark_context))
 
 
 def mrjob_pythonpath():

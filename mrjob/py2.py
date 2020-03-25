@@ -1,5 +1,5 @@
-# Copyright 2015-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -141,13 +141,19 @@ xrange  # quiet, pyflakes
 # in most cases you should use ``mrjob.parse.urlparse()``
 if PY2:
     from urlparse import ParseResult
+    from urllib import pathname2url
+    from urlparse import urljoin
     from urllib2 import urlopen
     from urlparse import urlparse
 else:
     from urllib.parse import ParseResult
+    from urllib.request import pathname2url
+    from urllib.parse import urljoin
     from urllib.request import urlopen
     from urllib.parse import urlparse
 ParseResult
+pathname2url
+urljoin
 urlopen
 urlparse
 

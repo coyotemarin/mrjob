@@ -1,6 +1,7 @@
 # Copyright 2009-2016 Yelp and Contributors
 # Copyright 2017 Yelp
 # Copyright 2018 Yelp and Google, Inc.
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,6 +40,8 @@ from mrjob.logs.errors import _format_error
 from mrjob.logs.mixin import LogInterpretationMixin
 from mrjob.logs.step import _interpret_hadoop_jar_command_stderr
 from mrjob.logs.step import _is_counter_log4j_record
+from mrjob.logs.step import _log_line_from_driver
+from mrjob.logs.step import _log_log4j_record
 from mrjob.logs.wrap import _logs_exist
 from mrjob.parse import is_uri
 from mrjob.py2 import to_unicode
@@ -168,9 +171,6 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
         self._hadoop_streaming_jar = self._opts['hadoop_streaming_jar']
         self._searched_for_hadoop_streaming_jar = False
 
-        # Keep track of where the spark-submit binary is
-        self._spark_submit_bin = self._opts['spark_submit_bin']
-
         # List of dicts (one for each step) potentially containing
         # the keys 'history', 'step', and 'task' ('step' will always
         # be filled because it comes from the hadoop jar command output,
@@ -182,8 +182,6 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
             super(HadoopJobRunner, self)._default_opts(),
             dict(
                 hadoop_tmp_dir='tmp/mrjob',
-                spark_deploy_mode='client',
-                spark_master='yarn',
             )
         )
 
@@ -193,18 +191,25 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
         filesystem.
         """
         if self._fs is None:
-            self._fs = CompositeFilesystem(
-                HadoopFilesystem(self._opts['hadoop_bin']),
-                LocalFilesystem())
+            self._fs = CompositeFilesystem()
+
+            # don't pass [] to fs; this means not to use hadoop until
+            # fs.set_hadoop_bin() is called (used for running hadoop over SSH).
+            hadoop_bin = self._opts['hadoop_bin'] or None
+
+            self._fs.add_fs('hadoop',
+                            HadoopFilesystem(hadoop_bin))
+            self._fs.add_fs('local', LocalFilesystem())
+
         return self._fs
 
     def get_hadoop_version(self):
         """Invoke the hadoop executable to determine its version"""
-        return self.fs.get_hadoop_version()
+        return self.fs.hadoop.get_hadoop_version()
 
     def get_hadoop_bin(self):
         """Find the hadoop binary. A list: binary followed by arguments."""
-        return self.fs.get_hadoop_bin()
+        return self.fs.hadoop.get_hadoop_bin()
 
     def get_hadoop_streaming_jar(self):
         """Find the path of the hadoop streaming jar, or None if not found."""
@@ -314,44 +319,11 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
         for path in _FALLBACK_HADOOP_LOG_DIRS:
             yield path
 
-    def get_spark_submit_bin(self):
-        if not self._spark_submit_bin:
-            self._spark_submit_bin = self._find_spark_submit_bin()
-        return self._spark_submit_bin
-
-    def _find_spark_submit_bin(self):
-        # TODO: this is very similar to _find_hadoop_bin() (in fs)
-        for path in unique(self._spark_submit_bin_dirs()):
-            log.info('Looking for spark-submit binary in %s...' % (
-                path or '$PATH'))
-
-            spark_submit_bin = which('spark-submit', path=path)
-
-            if spark_submit_bin:
-                log.info('Found spark-submit binary: %s' % spark_submit_bin)
-                return [spark_submit_bin]
-        else:
-            log.info("Falling back to 'spark-submit'")
-            return ['spark-submit']
-
-    def _spark_submit_bin_dirs(self):
-        # $SPARK_HOME
-        spark_home = os.environ.get('SPARK_HOME')
-        if spark_home:
-            yield os.path.join(spark_home, 'bin')
-
-        yield None  # use $PATH
-
-        # some other places recommended by install docs (see #1366)
-        yield '/usr/lib/spark/bin'
-        yield '/usr/local/spark/bin'
-        yield '/usr/local/lib/spark/bin'
-
     def _run(self):
         self._find_binaries_and_jars()
         self._create_setup_wrapper_scripts()
         self._add_job_files_for_upload()
-        self._upload_local_files_to_hdfs()
+        self._upload_local_files()
         self._run_job_in_hadoop()
 
     def _find_binaries_and_jars(self):
@@ -364,7 +336,7 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
         # this triggers looking for Hadoop binary
         self.get_hadoop_version()
 
-        if self._has_streaming_steps():
+        if self._has_hadoop_streaming_steps():
             self.get_hadoop_streaming_jar()
 
         if self._has_spark_steps():
@@ -373,23 +345,8 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
     def _add_job_files_for_upload(self):
         """Add files needed for running the job (setup and input)
         to self._upload_mgr."""
-        for path in self._working_dir_mgr.paths():
-            self._upload_mgr.add(path)
         for path in self._py_files():
             self._upload_mgr.add(path)
-
-    def _upload_local_files_to_hdfs(self):
-        """Copy files managed by self._upload_mgr to HDFS
-        """
-        self.fs.mkdir(self._upload_mgr.prefix)
-
-        log.info('Copying local files to %s...' % self._upload_mgr.prefix)
-        for path, uri in self._upload_mgr.path_to_uri().items():
-            self._upload_to_hdfs(path, uri)
-
-    def _upload_to_hdfs(self, path, target):
-        log.debug('  %s -> %s' % (path, target))
-        self.fs._put(path, target)
 
     def _dump_stdin_to_local_file(self):
         """Dump sys.stdin to a local file, and return the path to it."""
@@ -439,7 +396,7 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
 
                 # there shouldn't be much output to STDOUT
                 for line in step_proc.stdout:
-                    _log_line_from_hadoop(to_unicode(line).strip('\r\n'))
+                    _log_line_from_driver(to_unicode(line).strip('\r\n'))
 
                 step_proc.stdout.close()
                 step_proc.stderr.close()
@@ -448,7 +405,16 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
             else:
                 # we have PTYs
                 if pid == 0:  # we are the child process
-                    os.execvpe(step_args[0], step_args, env)
+                    try:
+                        os.execvpe(step_args[0], step_args, env)
+                        # now we are no longer Python
+                    except OSError as ex:
+                        # use _exit() so we don't do cleanup, etc. that's
+                        # the parent process's job
+                        os._exit(ex.errno)
+                    finally:
+                        # if we got some other exception, still exit hard
+                        os._exit(-1)
                 else:
                     log.debug('Invoking Hadoop via PTY')
 
@@ -489,10 +455,13 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
         and *spark_master* is not ``'yarn'``, warn that *upload_archives*
         will be ignored by Spark."""
         if (_is_spark_step_type(step['type']) and
-                self._opts['spark_master'] != 'yarn' and
+                self._spark_master() != 'yarn' and
                 self._opts['upload_archives']):
             log.warning('Spark will probably ignore archives because'
-                        " spark_master is not set to 'yarn'")
+                        " spark_master is not 'yarn'")
+
+    def _spark_master(self):
+        return self._opts['spark_master'] or 'yarn'
 
     def _args_for_step(self, step_num):
         step = self._get_step(step_num)
@@ -537,7 +506,7 @@ class HadoopJobRunner(MRJobBinRunner, LogInterpretationMixin):
 
         if step.get('args'):
             args.extend(
-                self._interpolate_step_args(step['args'], step_num))
+                self._interpolate_jar_step_args(step['args'], step_num))
 
         return args
 
@@ -635,16 +604,7 @@ def _hadoop_prefix_from_bin(hadoop_bin):
     return hadoop_home
 
 
-def _log_line_from_hadoop(line, level=None):
-    """Log ``'  <line>'``. *line* should be a string.
-
-    Optionally specify a logging level (default is logging.INFO).
-    """
-    log.log(level or logging.INFO, '  %s' % line)
-
-
 def _log_record_from_hadoop(record):
     """Log log4j record parsed from hadoop stderr."""
     if not _is_counter_log4j_record(record):  # counters are printed separately
-        level = getattr(logging, record.get('level') or '', None)
-        _log_line_from_hadoop(record['message'], level=level)
+        _log_log4j_record(record)

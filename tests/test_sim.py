@@ -1,5 +1,5 @@
-# Copyright 2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2017-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -128,7 +128,7 @@ class MRJobFileOptionsTestCase(SandboxedTestCase):
 
     def test_with_input_file_option(self):
         mr_job = MRCustomFileOptionJob(
-            ['-r', 'inline', '--platform_file', self.input_file_path])
+            ['-r', 'inline', '--platform-file', self.input_file_path])
         mr_job.sandbox(stdin=BytesIO(b'1\n'))
 
         with mr_job.make_runner() as runner:
@@ -165,7 +165,7 @@ class MRCustomFileOptionJob(MRJob):
 
     def configure_args(self):
         super(MRCustomFileOptionJob, self).configure_args()
-        self.add_file_arg('--platform_file')
+        self.add_file_arg('--platform-file')
 
     def mapper_init(self):
         with open(self.options.platform_file) as f:
@@ -363,3 +363,22 @@ class DistributedCachePermissionsTestCase(SandboxedTestCase):
         self.assertTrue(data_perms & stat.S_IXUSR)
         self.assertFalse(data_perms & stat.S_IXGRP)
         self.assertFalse(data_perms & stat.S_IXOTH)
+
+
+class FSDoesntHandleURIsTestCase(SandboxedTestCase):
+    # regression test for #1185
+
+    def test_no_uris(self):
+        runner = InlineMRJobRunner()
+
+        # sanity check
+        foo_path = self.makefile('foo')
+        bar_path = os.path.join(self.tmp_dir, 'bar')
+        self.assertTrue(runner.fs.exists(foo_path))
+        self.assertFalse(runner.fs.exists(bar_path))
+
+        # URI should raise IOError, not return False
+        self.assertRaises(IOError,
+                          runner.fs.exists, 's3://walrus/fish')
+        # and it's because we wrapped the local fs in CompositeFilesystem
+        self.assertFalse(runner.fs.local.exists('s3://walrus/fish'))

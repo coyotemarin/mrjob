@@ -2,8 +2,8 @@
 # Copyright 2009-2012 Yelp
 # Copyright 2013 Yelp and Contributors
 # Copyright 2014 Brett Gibson
-# Copyright 2015-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -328,12 +328,12 @@ def _terminate_and_notify(runner, cluster_id, cluster_name, num_steps,
         did_terminate = True
     else:
         status = _attempt_to_acquire_lock(
-            runner.fs,
+            runner.fs.s3,
             runner._lock_uri(cluster_id, num_steps),
             runner._opts['cloud_fs_sync_secs'],
             '%s (%s)' % (msg,
                          runner._make_unique_job_key(label='terminate')),
-            seconds_to_expiration=60*max_mins_locked,
+            mins_to_expiration=max_mins_locked,
         )
         if status:
             runner.make_emr_client().terminate_job_flows(

@@ -44,6 +44,9 @@ Job placement
 
     Geographic region to run jobs in (e.g.  ``us-central-1``).
 
+    If mrjob create a temporary bucket, it will be created in this region as
+    well.
+
     If you set region, you do not need to set :mrjob-opt:`zone`; a zone
     will be chosen for you automatically.
 
@@ -64,6 +67,10 @@ Job placement
    ``'default'``). Specifying *subnet* rather than :mrjob-opt:`network` will
    ensure that your cluster only has access to one specific geographic
    :mrjob-opt:`region`, rather than the entire VPC.
+
+   .. versionchanged:: 0.6.8
+
+      ``--subnet ''`` un-sets the subnet on EMR (used to be ignored).
 
    .. versionchanged:: 0.6.3
 
@@ -391,6 +398,12 @@ Cluster software configuration
               LogUri: null  # !clear works too
               SupportedProducts:
               - mapr-m3
+
+    .. versionchanged:: 0.6.8
+
+       You may use a *name* with dots in it to set (or unset) nested
+       properties. For example:
+       ``--extra-cluster-param Instances.EmrManagedMasterSecurityGroup=sg-foo``.
 
     .. versionadded:: 0.6.0
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Copyright 2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2017-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import socket
 import random
 import signal
 import time
+from copy import deepcopy
 from os.path import basename
 from subprocess import Popen
 from subprocess import PIPE
@@ -49,6 +50,9 @@ _EXT_TO_UNARCHIVE_CMD = {
 
 # issue a warning if max_mins_idle is set to less than this
 _DEFAULT_MAX_MINS_IDLE = 10.0
+
+# default part size (so we can share with Spark runner)
+_DEFAULT_CLOUD_PART_SIZE_MB = 100
 
 
 class HadoopInTheCloudJobRunner(MRJobBinRunner):
@@ -130,7 +134,7 @@ class HadoopInTheCloudJobRunner(MRJobBinRunner):
         return combine_dicts(
             super(HadoopInTheCloudJobRunner, self)._default_opts(),
             dict(
-                cloud_part_size_mb=100,  # 100 MB
+                cloud_part_size_mb=_DEFAULT_CLOUD_PART_SIZE_MB,
                 max_mins_idle=_DEFAULT_MAX_MINS_IDLE,
                 no_steps_limit=False,
                 # don't use a list because it makes it hard to read option
@@ -412,18 +416,10 @@ class HadoopInTheCloudJobRunner(MRJobBinRunner):
     def _add_extra_cluster_params(self, params):
         """Return a dict with the *extra_cluster_params* opt patched into
         *params*, and ``None`` values removed."""
-        def recursive_dict_merge(base, new_dict):
-            """Merged new_dict into base recursively at each value"""
-            for key in new_dict:
-                if key in base and isinstance(base[key], dict) and \
-                  isinstance(new_dict[key], dict):
-                    recursive_dict_merge(base[key], new_dict[key])
-                else:
-                    base[key] = new_dict[key]
+        params = deepcopy(params)
 
-        params = params.copy()
-        recursive_dict_merge(params, self._opts['extra_cluster_params'])
-        params = {k: v for k, v in params.items() if v is not None}
+        for k, v in sorted(self._opts['extra_cluster_params'].items()):
+            _patch_params(params, k, v)
 
         return params
 
@@ -608,3 +604,29 @@ class HadoopInTheCloudJobRunner(MRJobBinRunner):
             return random.sample(self._opts['ssh_bind_ports'], num_picks)
         finally:
             random.setstate(random_state)
+
+
+def _patch_params(params, name, value):
+    """Helper method for _add_extra_cluster_params().
+
+    Set *name* in *params* to *value*
+
+    If *name* has one or more dots in it, recursively set the value
+    in successive nested dictionaries, creating them if necessary.
+    For example, if *name* is ``Instances.EmrManagedMasterSecurityGroup``,
+    set ``params['Instances']['EmrManagedMasterSecurityGroup']``
+
+    If *value* is ``None``, delete the value (if it exists), rather than
+    setting it to ``None``.
+    """
+    if not isinstance(params, dict):
+        raise TypeError('must be a dictionary')
+
+    if '.' in name:
+        head, rest = name.split('.', 1)
+        _patch_params(params.setdefault(head, {}), rest, value)
+    elif value is None:
+        if name in params:
+            del params[name]
+    else:
+        params[name] = value

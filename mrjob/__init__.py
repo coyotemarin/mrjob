@@ -45,6 +45,7 @@ __credits__ = [
     'Ciaran Doherty <cad106uk@gmail.com>',
     'Tom Dooner <tomdooner@gmail.com>',
     'Tomer Elmalem <telmalem@gmail.com>',
+    'Stuart Elston <selston@yelp.com>',
     'Pedro Emanuel de Castro Faria Salgado <steenzout@ymail.com>',
     'Buck Evan <buck@yelp.com>',
     'Aaron Friedlander <aaron.friedlander@affirm.com>',
@@ -76,6 +77,7 @@ __credits__ = [
     'Boris Lau <boris.w.lau@gmail.com>',
     'Laucia <laucia@users.noreply.github.com>',
     'Jerome Leclanche <jerome@leclan.ch>',
+    'Lydian Lee <tingyenl@yelp.com>',
     'Robert Leftwich <rl.0x0@eml.cc>',
     'Andrew Lenards <andrew.lenards@gmail.com>',
     'Ronny Lindner <ronny.lindner@invia.de>',
@@ -135,4 +137,4 @@ __credits__ = [
     'drulludanni <drulludanni5@gmail.com>',
 ]
 
-__version__ = '0.6.7+affirm.1.1.0'
+__version__ = '0.6.8+affirm.1.1.0'

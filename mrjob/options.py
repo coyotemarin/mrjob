@@ -2,6 +2,7 @@
 # Copyright 2009-2016 Yelp and Contributors
 # Copyright 2017 Yelp
 # Copyright 2018 Yelp, Google, Inc., and Contributors
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -85,15 +86,16 @@ _OPTPARSE_TYPES = dict(
 # use to identify malformed JSON
 _PROBABLY_JSON_RE = re.compile(r'^\s*[\{\[\"].*$')
 
-# list of runners we implement
-_VALID_RUNNERS = [
-    'local',
-    'hadoop',
+# names of runners
+_RUNNER_ALIASES = {
+    'dataproc',
     'emr',
-    'yarnemr',
+    'hadoop',
     'inline',
-    'dataproc'
-]
+    'local',
+    'spark',
+    'yarnemr',
+}
 
 
 ### custom actions ###
@@ -756,6 +758,14 @@ _RUNNER_OPTS = dict(
             (['--gcloud-bin'], dict(help='path to gcloud binary')),
         ],
     ),
+    gcs_region=dict(
+        cloud_role='connect',
+        switches=[
+            (['--gcs-region'], dict(
+                help='region to create Google Cloud Storage buckets in',
+            )),
+        ],
+    ),
     hadoop_bin=dict(
         combiner=combine_cmds,
         switches=[
@@ -1029,6 +1039,17 @@ _RUNNER_OPTS = dict(
             )),
         ],
     ),
+    # Spark runner only, only passed in on the command line (see #2040)
+    max_output_files=dict(
+        switches=[
+            (['--max-output-files'], dict(
+                help=('Maximum number of output files when running a'
+                      ' streaming job on Spark; just runs rdd.coalesce()'
+                      ' before outputting files'),
+                type=int,
+            )),
+        ],
+    ),
     mins_to_end_of_hour=dict(
         cloud_role='launch',
         deprecated=True,
@@ -1135,7 +1156,8 @@ _RUNNER_OPTS = dict(
         switches=[
             (['--project-id'], dict(
                 deprecated_aliases=['--gcp-project'],
-                help='Project to run Dataproc jobs in'
+                help=('Project to use when connecting to Google Cloud Services'
+                      ' and to run Cloud Dataproc jobs in')
             )),
         ],
     ),
@@ -1202,6 +1224,14 @@ _RUNNER_OPTS = dict(
                       " s3-us-west-1.amazonaws.com). You usually shouldn't"
                       " set this; by default mrjob will choose the correct"
                       " endpoint for each S3 bucket based on its location."),
+            )),
+        ],
+    ),
+    s3_region=dict(
+        cloud_role='connect',
+        switches=[
+            (['--s3-region'], dict(
+                help='AWS region to create s3 buckets in',
             )),
         ],
     ),
@@ -1296,6 +1326,16 @@ _RUNNER_OPTS = dict(
         switches=[
             (['--spark-submit-bin'], dict(
                 help='spark-submit binary. You may include arguments.'
+            )),
+        ],
+    ),
+    spark_tmp_dir=dict(
+        cloud_role='launch',
+        combiner=combine_paths,
+        switches=[
+            (['--spark-tmp-dir'], dict(
+                help=('optional URI visible to Spark executors to use as our'
+                      ' temp directory.'),
             )),
         ],
     ),
@@ -1677,8 +1717,10 @@ def _add_job_args(parser, include_deprecated=True):
         'and must be empty')
 
     parser.add_argument(
-        '-r', '--runner', dest='runner', default=None, choices=_VALID_RUNNERS,
-        help='Where to run the job; one of %s' % ', '.join(_VALID_RUNNERS))
+        '-r', '--runner', dest='runner', default=None,
+        choices=sorted(_RUNNER_ALIASES),
+        help=('Where to run the job; one of: %s' % ', '.join(
+            sorted(_RUNNER_ALIASES))))
 
     parser.add_argument(
         '--step-output-dir', dest='step_output_dir', default=None,

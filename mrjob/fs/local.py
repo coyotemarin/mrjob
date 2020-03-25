@@ -1,6 +1,7 @@
 # Copyright 2009-2012 Yelp and Contributors
 # Copyright 2015 Yelp
 # Copyright 2017 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 #
@@ -49,12 +50,16 @@ class LocalFilesystem(Filesystem):
             for chunk in decompress(f, filename):
                 yield chunk
 
+    def exists(self, path_glob):
+        return bool(glob.glob(path_glob))
+
     def mkdir(self, path):
         if not os.path.isdir(path):
             os.makedirs(path)
 
-    def exists(self, path_glob):
-        return bool(glob.glob(path_glob))
+    def put(self, src, path):
+        """Copy a file from *src* to *path*"""
+        shutil.copyfile(src, path)
 
     def rm(self, path_glob):
         for path in glob.glob(path_glob):

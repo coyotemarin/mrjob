@@ -1,6 +1,7 @@
 # Copyright 2009-2013 Yelp
 # Copyright 2015 Yelp
 # Copyright 2017 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -117,6 +118,13 @@ class LocalFSTestCase(SandboxedTestCase):
     def test_exists_yes(self):
         path = self.makefile('f', 'contents')
         self.assertEqual(self.fs.exists(path), True)
+
+    def test_put(self):
+        src = self.makefile('f', 'contents')
+        dest = join(self.tmp_dir, 'g')
+
+        self.fs.put(src, dest)
+        self.assertEqual(b''.join(self.fs.cat(dest)), b'contents')
 
     def test_rm_file(self):
         path = self.makefile('f', 'contents')
