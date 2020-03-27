@@ -12,7 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from mock import patch
 import datetime
 import os.path
 import tempfile
@@ -22,6 +21,7 @@ import boto3
 from mrjob.queue import SchedulingQueue
 from mrjob.emr import EMRJobRunner
 from tests.mock_boto3 import MockBoto3TestCase
+from tests.py2 import patch
 
 
 class SchedulingQueueTestCase(MockBoto3TestCase):
