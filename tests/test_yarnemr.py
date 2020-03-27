@@ -145,6 +145,8 @@ class YarnEMRJobRunnerClusterLaunchTestCase(YarnEMRJobRunnerTestBase):
         runner._check_cluster_state.return_value = \
             5 if state_ret_val else -1
         # return it
+        runner._prepare_for_launch()
+
         return runner
 
     def test_valid_cluster_find(self):

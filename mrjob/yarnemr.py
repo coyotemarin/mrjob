@@ -167,8 +167,6 @@ class YarnEMRJobRunner(EMRJobRunner):
         intentionally WET as the logic has inevitably started to drift. The
         function was renamed to `_launch_yarnemr_job` to avoid confusion.
         """
-        self._create_s3_tmp_bucket_if_needed()
-
         # Resource constraints for if we try to find a cluster
         resource_constraints = [
             _ResourceConstraint(operator.ge, 'availableVirtualCores',
@@ -265,7 +263,7 @@ class YarnEMRJobRunner(EMRJobRunner):
             self._check_cluster_spark_support()
 
         if version_gte(self.get_image_version(), '4.3.0'):
-            self._ssh_fs.use_sudo_over_ssh()
+            self.fs.ssh.use_sudo_over_ssh()
 
         self._execute_job()
 
