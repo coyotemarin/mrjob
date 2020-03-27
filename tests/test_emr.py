@@ -1920,10 +1920,9 @@ class MasterNodeSetupScriptTestCase(MockBoto3TestCase):
         with open(runner._master_node_setup_script_path, 'rb') as f:
             contents = f.read().decode("utf-8")
 
-        expected_contents = '  COW=MOO\n  CAT=MEOW\n' \
-                            '  echo "$COW"\n  echo "$CAT"\n'
-
-        self.assertIn(expected_contents, contents)
+        self.assertIn('  COW=MOO\n', contents)
+        self.assertIn('  CAT=MEOW\n', contents)
+        self.assertIn('  echo "$COW"\n  echo "$CAT"\n', contents)
 
     def test_master_setup_upload(self):
         runner = EMRJobRunner(upload_files='moo.txt',
