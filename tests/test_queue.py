@@ -57,8 +57,8 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
         queue.enter_cluster_creation_queue()
 
         # ensure we creation and wait for a cluster to come up
-        mock_create_cluster.assert_called_once()
-        mock_wait_for_cluster.assert_called_once()
+        self.assertEqual(mock_create_cluster.call_count, 1)
+        self.assertEqual(mock_wait_for_cluster.call_count, 1)
 
         # check that all the markers are there
         s3 = boto3.resource('s3')
@@ -144,8 +144,8 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
                                 1, self.runner)
         queue.enter_cluster_creation_queue()
 
-        mock_create_cluster.assert_called_once()
-        mock_wait_for_cluster.assert_called_once()
+        self.assertEqual(mock_create_cluster.call_count, 1)
+        self.assertEqual(mock_wait_for_cluster.call_count, 1)
 
         # check the number of markers
         # 8 = 3 creation + 3 attempts + new attempt + new creation
@@ -167,8 +167,8 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
                                 1, self.runner)
         queue.enter_cluster_creation_queue()
 
-        mock_create_cluster.assert_called_once()
-        mock_wait_for_cluster.assert_called_once()
+        self.assertEqual(mock_create_cluster.call_count, 1)
+        self.assertEqual(mock_wait_for_cluster.call_count, 1)
 
         # check the number of markers
         # 22 = 20 old attempts + new attempt + new creation
