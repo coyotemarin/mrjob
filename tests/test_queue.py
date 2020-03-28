@@ -84,7 +84,7 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
                                                       'late1', 'creation')
         queue = SchedulingQueue(self.runner.fs, 's3://fake/late1',
                                 queue_size, self.runner)
-        with patch('mrjob.queue.time.sleep',
+        with patch('time.sleep',
                    side_effect=write_success) as mock_sleep_time:
             result = queue.enter_cluster_creation_queue()
             self.assertTrue(result)
@@ -113,7 +113,7 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
         # enter the queue and ensure we timed out since there is no creation
         queue = SchedulingQueue(self.runner.fs, 's3://fake/late2',
                                 queue_size, self.runner)
-        with patch('mrjob.queue.time.sleep') as mock_sleep_time:
+        with patch('time.sleep') as mock_sleep_time:
             result = queue.enter_cluster_creation_queue()
             self.assertFalse(result)
             # 480+240+120+60*6 = 1200 (9 counts before max)
@@ -130,7 +130,7 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
 
     @patch('mrjob.emr.EMRJobRunner._create_cluster')
     @patch('mrjob.emr.EMRJobRunner._wait_for_cluster')
-    @patch('mrjob.queue.time.sleep')
+    @patch('time.sleep')
     def test_extra_creation(self, mock_sleep_time, mock_wait_for_cluster,
                             mock_create_cluster):
         """More the merrier"""
