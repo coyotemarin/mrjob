@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Test the Spark runner."""
+import json
 from io import BytesIO
 from os import listdir
 from os.path import exists
@@ -50,6 +51,7 @@ from tests.mr_null_spark import MRNullSpark
 from tests.mr_os_walk_job import MROSWalkJob
 from tests.mr_pass_thru_arg_test import MRPassThruArgTest
 from tests.mr_sort_and_group import MRSortAndGroup
+from tests.mr_sort_and_group_reversed_text import MRSortAndGroupReversedText
 from tests.mr_spark_os_walk import MRSparkOSWalk
 from tests.mr_streaming_and_spark import MRStreamingAndSpark
 from tests.mr_test_jobconf import MRTestJobConf
@@ -232,6 +234,25 @@ class SparkRunnerSparkStepsTestCase(MockFilesystemsTestCase):
     # TODO: add a Spark JAR to the repo, so we can test it
 
 
+class SparkStepsDescTestCase(MockFilesystemsTestCase):
+
+    def test_steps_desc_is_emr_proof(self):
+        # regression test for #2070
+        job = MRTwoStepJob(['-r', 'spark'])
+        job.sandbox()
+
+        with job.make_runner() as runner:
+            args = runner._spark_script_args(step_num=0, last_step_num=1)
+            steps_desc_arg = args[args.index('--steps-desc') + 1]
+
+            # EMR's command-runner.jar deletes '}}' from args!
+            self.assertNotIn('}}', steps_desc_arg)
+
+            # make sure we didn't mangle the JSON
+            self.assertEqual(json.loads(steps_desc_arg),
+                             runner._get_steps())
+
+
 @skipIf(pyspark is None, 'no pyspark module')
 class SparkWorkingDirTestCase(MockFilesystemsTestCase):
     # regression tests for #1922
@@ -246,8 +267,8 @@ class SparkWorkingDirTestCase(MockFilesystemsTestCase):
         # doesn't have a working directory
         job = MRSparkOSWalk(['-r', 'spark',
                              '--spark-master', _LOCAL_CLUSTER_MASTER,
-                             '--file', fish_path + '#ghoti',
-                             '--file', fowl_path])
+                             '--files',
+                             '%s#ghoti,%s' % (fish_path, fowl_path)])
         job.sandbox()
 
         file_sizes = {}
@@ -293,9 +314,9 @@ class SparkWorkingDirTestCase(MockFilesystemsTestCase):
         job = MRSparkOSWalk(['-r', 'spark',
                              '--spark-master', 'mesos://host:9999',
                              '--spark-tmp-dir', 's3://walrus/tmp',
-                             '--file', 's3://walrus/fish#ghoti',
-                             '--file', 's3://walrus/fowl',
-                             '--file', foe_path])
+                             '--files',
+                             ('s3://walrus/fish#ghoti,s3://walrus/fowl,%s' %
+                              foe_path)])
         job.sandbox()
 
         with job.make_runner() as runner:
@@ -568,6 +589,24 @@ class SparkRunnerStreamingStepsTestCase(MockFilesystemsTestCase):
         # doesn't. if there's no working dir, the job just gets n_file's
         # actual path
         self._test_file_upload_args_loaded_at_init('local[*]')
+
+    def test_skip_internal_protocol_test(self):
+        input_bytes = (
+            b'alligator\nactuary\nbowling\nartichoke\nballoon\nbaby\n')
+
+        job = MRSortAndGroupReversedText(['-r', 'spark',
+                                          '--skip-internal-protocol'])
+        job.sandbox(stdin=BytesIO(input_bytes))
+
+        with job.make_runner() as runner:
+            runner.run()
+
+            # normally this job sorts by *reversed* word, but that depends on
+            # an internal protocol, which is ignored
+            self.assertEqual(
+                dict(job.parse_output(runner.cat_output())),
+                dict(a=['actuary', 'alligator', 'artichoke'],
+                     b=['baby', 'balloon', 'bowling']))
 
 
 class GroupStepsTestCase(MockFilesystemsTestCase):

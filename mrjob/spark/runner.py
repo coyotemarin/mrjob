@@ -49,6 +49,8 @@ from mrjob.util import _create_zip_file
 
 log = logging.getLogger(__name__)
 
+_CLOSE_BRACE_AFTER_CLOSE_BRACE_RE = re.compile(r'(?<=\})\}')
+
 
 class SparkMRJobRunner(MRJobBinRunner):
     """Runs a :py:class:`~mrjob.job.MRJob` on your Spark cluster (with or
@@ -79,6 +81,7 @@ class SparkMRJobRunner(MRJobBinRunner):
         'project_id',  # used by GCS filesystem
         's3_endpoint',
         's3_region',  # used when creating buckets on S3
+        'skip_internal_protocol',
         'spark_deploy_mode',
         'spark_master',
         'spark_tmp_dir',  # where to put temp files in Spark
@@ -395,13 +398,20 @@ class SparkMRJobRunner(MRJobBinRunner):
         args.append(
             self._step_output_uri(last_step_num))
 
-        # --hadoop-input-format. Pass '' to indicate we know there is none
-        args.extend(['--hadoop-input-format',
-                     self._hadoop_input_format or ''])
+        # --hadoop-input-format
+        if self._hadoop_input_format:
+            args.extend(['--hadoop-input-format', self._hadoop_input_format])
+        else:
+            # you can't pass --hadoop-input-format '' to EMR's script runner,
+            # so pass something that doesn't use an empty string (see #2055)
+            args.append('--no-hadoop-input-format')
 
-        # --hadoop-output-format. Pass '' to indicate we know there is none
-        args.extend(['--hadoop-output-format',
-                     self._hadoop_output_format or ''])
+        # --hadoop-output-format
+        if self._hadoop_output_format:
+            args.extend(['--hadoop-output-format', self._hadoop_output_format])
+        else:
+            # alternative to --hadoop-output-format '' (see #2055)
+            args.append('--no-hadoop-output-format')
 
         # --sort-values
         if self._sort_values:
@@ -410,7 +420,8 @@ class SparkMRJobRunner(MRJobBinRunner):
             args.append('--no-sort-values')
 
         # --steps-desc
-        args.extend(['--steps-desc', json.dumps(steps)])
+        args.extend(['--steps-desc',
+                     _emr_proof_steps_desc(json.dumps(steps))])
 
         # --counter-output-dir, to simulate counters
         args.extend(['--counter-output-dir',
@@ -450,8 +461,13 @@ class SparkMRJobRunner(MRJobBinRunner):
             args.extend(['--max-output-files',
                          str(self._max_output_files)])
 
+        # --emulate-map-input-file
         if self._opts['emulate_map_input_file']:
             args.append('--emulate-map-input-file')
+
+        # --skip_internal-protocol
+        if self._opts['skip_internal_protocol']:
+            args.append('--skip-internal-protocol')
 
         return args
 
@@ -483,3 +499,10 @@ class SparkMRJobRunner(MRJobBinRunner):
         """Treat streaming steps as Spark steps that use Python."""
         return (super(SparkMRJobRunner, self)._is_pyspark_step(step) or
                 step['type'] == 'streaming')
+
+
+def _emr_proof_steps_desc(steps_desc):
+    # EMR's command-runner.jar does some very strange things to
+    # arguments, including deleting empty args and deleting
+    # '}}' from arguments. See #2070
+    return _CLOSE_BRACE_AFTER_CLOSE_BRACE_RE.sub(' }', steps_desc)

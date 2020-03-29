@@ -23,6 +23,7 @@ from io import BytesIO
 from os.path import exists
 from os.path import getsize
 from os.path import join
+from platform import python_implementation
 from shutil import make_archive
 from unittest import skipIf
 from zipfile import ZipFile
@@ -61,10 +62,11 @@ from tests.sandbox import SandboxedTestCase
 from tests.sandbox import mrjob_conf_patcher
 
 # used to match command lines
-if PY2:
-    PYTHON_BIN = 'python'
-else:
-    PYTHON_BIN = 'python3'
+is_pypy = (python_implementation() == 'PyPy')
+PYTHON_BIN = (
+    ('pypy' if PY2 else 'pypy3') if is_pypy else
+    ('python' if PY2 else 'python3')
+)
 
 # a --spark-master that has a working directory and is available from pyspark
 _LOCAL_CLUSTER_MASTER = 'local-cluster[2,1,4096]'
@@ -1830,7 +1832,7 @@ class SparkUploadArgsTestCase(MockHadoopTestCase):
         self.log = self.start(patch('mrjob.bin.log'))
 
     def test_no_setup(self):
-        job = MRNullSpark(['-r', 'hadoop', '--file', 'foo'])
+        job = MRNullSpark(['-r', 'hadoop', '--files', 'foo'])
         job.sandbox()
 
         with job.make_runner() as runner:
@@ -1845,7 +1847,7 @@ class SparkUploadArgsTestCase(MockHadoopTestCase):
         job = MRNullSpark(
             ['-r', 'hadoop',
              '--setup', 'make -f Makefile#',
-             '--file', 'foo',
+             '--files', 'foo',
              ])
         job.sandbox()
 
@@ -1865,7 +1867,7 @@ class SparkUploadArgsTestCase(MockHadoopTestCase):
         job = MRNullSpark(
             ['-r', 'hadoop',
              '--setup', 'make -f Makefile#',
-             '--file', 'foo',
+             '--files', 'foo',
              '--spark-master', 'local[*]',
              ])
         job.sandbox()
