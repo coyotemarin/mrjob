@@ -23,6 +23,8 @@ from mrjob.aws import _boto3_paginate
 
 log = logging.getLogger(__name__)
 
+# Affirm: may eventually want to merge this into mrjob/pool.py. Modules named
+# queue.py can be especially confusing to urllib3, used by boto3, on Python 3
 
 # We first check if the cluster has been created after 8 minutes, then another
 # 4, then 2, then every 1 minute for a max of 20 minutes.
