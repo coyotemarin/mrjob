@@ -553,9 +553,9 @@ class YarnEMRJobRunner(EMRJobRunner):
         if _is_spark_step_type(step['type']):
             method = self._spark_step_hadoop_jar_step
         elif step['type'] == 'streaming':
-            raise AssertionError('Steaming not yet support in yarn runner')
+            raise AssertionError('Hadoop Streaming not yet supported')
         elif step['type'] == 'jar':
-            raise AssertionError('Jar steps not yet support in yarn runner')
+            raise AssertionError('Jar steps not yet supported')
         else:
             raise AssertionError('Bad step type: %r' % (step['type'],))
 
