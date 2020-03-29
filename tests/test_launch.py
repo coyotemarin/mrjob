@@ -184,8 +184,7 @@ class CommandLineArgsTestCase(BasicTestCase):
         self.assertRaises(ValueError, MRJobLauncher, args=['--quux', 'baz'])
 
     def test_should_exit_when_invoked_as_script(self):
-        args = [sys.executable, inspect.getsourcefile(MRJobLauncher),
-                '--quux', 'baz']
+        args = [sys.executable, '-m', 'mrjob.launch', '--quux', 'baz']
 
         # add . to PYTHONPATH (in case mrjob isn't actually installed)
         env = combine_envs(os.environ,
