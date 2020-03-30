@@ -12,7 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from mock import patch
 import datetime
 import os.path
 import tempfile
@@ -22,6 +21,7 @@ import boto3
 from mrjob.queue import SchedulingQueue
 from mrjob.emr import EMRJobRunner
 from tests.mock_boto3 import MockBoto3TestCase
+from tests.py2 import patch
 
 
 class SchedulingQueueTestCase(MockBoto3TestCase):
@@ -57,8 +57,8 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
         queue.enter_cluster_creation_queue()
 
         # ensure we creation and wait for a cluster to come up
-        mock_create_cluster.assert_called_once()
-        mock_wait_for_cluster.assert_called_once()
+        self.assertEqual(mock_create_cluster.call_count, 1)
+        self.assertEqual(mock_wait_for_cluster.call_count, 1)
 
         # check that all the markers are there
         s3 = boto3.resource('s3')
@@ -84,7 +84,7 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
                                                       'late1', 'creation')
         queue = SchedulingQueue(self.runner.fs, 's3://fake/late1',
                                 queue_size, self.runner)
-        with patch('mrjob.queue.time.sleep',
+        with patch('time.sleep',
                    side_effect=write_success) as mock_sleep_time:
             result = queue.enter_cluster_creation_queue()
             self.assertTrue(result)
@@ -113,7 +113,7 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
         # enter the queue and ensure we timed out since there is no creation
         queue = SchedulingQueue(self.runner.fs, 's3://fake/late2',
                                 queue_size, self.runner)
-        with patch('mrjob.queue.time.sleep') as mock_sleep_time:
+        with patch('time.sleep') as mock_sleep_time:
             result = queue.enter_cluster_creation_queue()
             self.assertFalse(result)
             # 480+240+120+60*6 = 1200 (9 counts before max)
@@ -130,7 +130,7 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
 
     @patch('mrjob.emr.EMRJobRunner._create_cluster')
     @patch('mrjob.emr.EMRJobRunner._wait_for_cluster')
-    @patch('mrjob.queue.time.sleep')
+    @patch('time.sleep')
     def test_extra_creation(self, mock_sleep_time, mock_wait_for_cluster,
                             mock_create_cluster):
         """More the merrier"""
@@ -144,8 +144,8 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
                                 1, self.runner)
         queue.enter_cluster_creation_queue()
 
-        mock_create_cluster.assert_called_once()
-        mock_wait_for_cluster.assert_called_once()
+        self.assertEqual(mock_create_cluster.call_count, 1)
+        self.assertEqual(mock_wait_for_cluster.call_count, 1)
 
         # check the number of markers
         # 8 = 3 creation + 3 attempts + new attempt + new creation
@@ -167,8 +167,8 @@ class SchedulingQueueTestCase(MockBoto3TestCase):
                                 1, self.runner)
         queue.enter_cluster_creation_queue()
 
-        mock_create_cluster.assert_called_once()
-        mock_wait_for_cluster.assert_called_once()
+        self.assertEqual(mock_create_cluster.call_count, 1)
+        self.assertEqual(mock_wait_for_cluster.call_count, 1)
 
         # check the number of markers
         # 22 = 20 old attempts + new attempt + new creation
