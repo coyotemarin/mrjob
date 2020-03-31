@@ -121,9 +121,10 @@ class MRJobBinRunner(MRJobRunner):
                 job_key = self._job_key.replace('.', '_')
                 self._opts['cmdenv'][key] = value % job_key
 
-    def _default_opts(self):
+    @classmethod
+    def _default_opts(cls):
         return combine_dicts(
-            super(MRJobBinRunner, self)._default_opts(),
+            super(MRJobBinRunner, cls)._default_opts(),
             dict(
                 read_logs=True,
             )

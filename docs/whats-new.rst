@@ -4,6 +4,25 @@ What's New
 For a complete list of changes, see `CHANGES.txt
 <https://github.com/Yelp/mrjob/blob/master/CHANGES.txt>`_
 
+.. _v0.7.1:
+
+0.7.1
+-----
+
+EMR
+^^^
+Fixed a bug to set default value of `VisibleToAllUsers` to `True`.
+
+You can set sub-parameters with :mrjob-opt:`extra_cluster_params` to set it `False`. For
+example, you can now do:
+
+.. code-block:: sh
+
+   --extra-cluster-param VisibleToAllUsers=false
+
+Added logging for mrjob to show invoked runner with keyword arguments.
+Contents of archives are now used during bootstrapping to ensure clusters have same setup.
+
 .. _v0.7.0:
 
 0.7.0
@@ -229,7 +248,7 @@ Deprecated methods :py:meth:`~mrjob.job.MRJob.add_file_option` and
 Nearly full support for Spark
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-This release adds nearly full support for Spark, including mrjob-speific
+This release adds nearly full support for Spark, including mrjob-specific
 features like :mrjob-opt:`setup` scripts and
 :ref:`passthrough options <writing-cl-opts>`. See
 :ref:`why-mrjob-with-spark` for everything mrjob can do with Spark.
