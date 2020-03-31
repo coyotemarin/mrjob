@@ -5,8 +5,9 @@ python:
   - "3.5"
   - "3.6"
   - "3.7"
-  - "pypy2.7-6.0"
-  - "pypy3.5-6.0"
+# PyPy support not needed for Affirm
+#  - "pypy2.7-6.0"
+#  - "pypy3.5-6.0"
 dist: xenial
 before_install:
   - sudo apt-get install openjdk-8-jdk
