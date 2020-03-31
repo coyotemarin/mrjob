@@ -2,6 +2,7 @@
 # Copyright 2015 Yelp
 # Copyright 2017 Yelp
 # Copyright 2018 Contributors
+# Copyright 2019 Yelp and Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +18,7 @@
 """Wrappers for gracefully retrying on error."""
 import logging
 import time
+from functools import partial
 
 log = logging.getLogger(__name__)
 
@@ -37,18 +39,19 @@ class RetryWrapper(object):
     exception.
     """
     def __init__(self, wrapped, retry_if,
-                 initial_backoff=_DEFAULT_BACKOFF,
+                 backoff=_DEFAULT_BACKOFF,
                  multiplier=_DEFAULT_MULTIPLIER,
                  max_tries=_DEFAULT_MAX_TRIES,
-                 max_backoff=_DEFAULT_MAX_BACKOFF):
+                 max_backoff=_DEFAULT_MAX_BACKOFF,
+                 unwrap_methods=()):
         """
         Wrap the given object
 
         :param wrapped: the object to wrap
         :param retry_if: a method that takes an exception, and returns whether
                          we should retry
-        :type initial_backoff: float
-        :param initial_backoff: the number of seconds to wait the first time
+        :type backoff: float
+        :param backoff: the number of seconds to wait the first time
                                 we get a retriable error
         :type multiplier: float
         :param multiplier: if we retry multiple times, the amount to multiply
@@ -58,14 +61,18 @@ class RetryWrapper(object):
                           forever
         :type max_backoff: float
         :param max_backoff: cap the backoff at this number of seconds
+        :type unwrap_methods: sequence
+        :param unwrap_methods: names of methods to call with this object as
+                               *self* rather than retrying on transient
+                               errors (e.g. methods that return a paginator)
         """
         self.__wrapped = wrapped
 
         self.__retry_if = retry_if
 
-        self.__initial_backoff = initial_backoff
-        if self.__initial_backoff <= 0:
-            raise ValueError('initial_backoff must be positive')
+        self.__backoff = backoff
+        if self.__backoff <= 0:
+            raise ValueError('backoff must be positive')
 
         self.__multiplier = multiplier
         if self.__multiplier < 1:
@@ -75,22 +82,16 @@ class RetryWrapper(object):
 
         self.__max_backoff = max_backoff
 
-    def __iter__(self):
-        """The paginator uses `_make_request` to make any API calls, so we
-        wrap this method manually in our retry logic and pass the iteration
-        back to the paginator."""
-        if hasattr(self.__wrapped, '__iter__'):
-            self.__wrapped._make_request = \
-                self.__wrap_method_with_call_and_maybe_retry(
-                    self.__wrapped._make_request)
-            return self.__wrapped.__iter__()
-        raise Exception('Not iterable')
+        self.__unwrap_methods = set(unwrap_methods)
 
     def __getattr__(self, name):
         """The glue that makes functions retriable, and returns other
         attributes from the wrapped object as-is."""
         x = getattr(self.__wrapped, name)
-        if hasattr(x, '__call__'):
+
+        if name in self.__unwrap_methods:
+            return partial(x.__func__, self)
+        elif hasattr(x, '__call__'):
             return self.__wrap_method_with_call_and_maybe_retry(x)
         else:
             return x
@@ -99,7 +100,7 @@ class RetryWrapper(object):
         """Wrap method f in a retry loop."""
 
         def call_and_maybe_retry(*args, **kwargs):
-            backoff = self.__initial_backoff
+            backoff = self.__backoff
             tries = 0
 
             while not self.__max_tries or tries < self.__max_tries:

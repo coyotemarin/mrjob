@@ -46,9 +46,19 @@ try:
         'zip_safe': False,  # so that we can bootstrap mrjob
     }
 
-    # grpcio 1.11.0 and 1.12.0 seem not to compile with PyPy
-    if hasattr(sys, 'pypy_version_info'):
-        setuptools_kwargs['install_requires'].append('grpcio<=1.10.0')
+    # Google libs don't install on Python 3.4. Which is fine, the only
+    # reason we support Python 3.4 at all is to support earlier
+    # AMIs on EMR. See #2090
+    if sys.version_info[0] == 2 or sys.version_info >= (3, 5):
+        setuptools_kwargs['install_requires'].extend([
+            'google-cloud-dataproc>=0.3.0',
+            'google-cloud-logging>=1.9.0',
+            'google-cloud-storage>=1.13.1',
+        ])
+
+        # grpcio 1.11.0 and 1.12.0 seem not to compile with PyPy
+        if hasattr(sys, 'pypy_version_info'):
+            setuptools_kwargs['install_requires'].append('grpcio<=1.10.0')
 
     # rapidjson exists on Python 3 only
     if sys.version_info >= (3, 0):
@@ -66,6 +76,9 @@ except ImportError:
     from distutils.core import setup
     setuptools_kwargs = {}
 
+with open('README.rst') as f:
+    long_description = f.read()
+
 setup(
     author='David Marin',
     author_email='dm@davidmarin.org',
@@ -79,6 +92,7 @@ setup(
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
@@ -93,7 +107,7 @@ setup(
         ]
     ),
     license='Apache',
-    long_description=open('README.rst').read(),
+    long_description=long_description,
     name='mrjob',
     packages=[
         'mrjob',

@@ -1051,26 +1051,26 @@ class InstanceGroupAndFleetTestCase(MockBoto3TestCase):
         # used to default to m1.small on 2.x AMIs (see #1932)
         self._test_instance_groups(
             dict(image_version='2.4.11'),
-            master=(1, 'm5.xlarge', None))
+            master=(1, 'm4.large', None))
 
     def test_2_x_ami_defaults_multiple_nodes(self):
         # used to default to m1.small on 2.x AMIs (see #1932)
         self._test_instance_groups(
             dict(image_version='2.4.11', num_core_instances=2),
-            core=(2, 'm5.xlarge', None),
-            master=(1, 'm5.xlarge', None))
+            core=(2, 'm4.large', None),
+            master=(1, 'm4.large', None))
 
     def test_release_label_hides_image_version(self):
         self._test_instance_groups(
             dict(release_label='emr-4.0.0', image_version='2.4.11'),
-            master=(1, 'm5.xlarge', None))
+            master=(1, 'm4.large', None))
 
     def test_spark_defaults_single_node(self):
         # when the default instance type was m1.medium, Spark needed
         # m1.large to run tasks, so we needed a separate test. See #1932
         self._test_instance_groups(
             dict(image_version='4.0.0', applications=['Spark']),
-            master=(1, 'm5.xlarge', None))
+            master=(1, 'm4.large', None))
 
     def test_spark_defaults_multiple_nodes(self):
         # This used to test whether we could get away with a smaller
@@ -1079,8 +1079,8 @@ class InstanceGroupAndFleetTestCase(MockBoto3TestCase):
             dict(image_version='4.0.0',
                  applications=['Spark'],
                  num_core_instances=2),
-            core=(2, 'm5.xlarge', None),
-            master=(1, 'm5.xlarge', None))
+            core=(2, 'm4.large', None),
+            master=(1, 'm4.large', None))
 
     def test_explicit_instance_types_take_precedence(self):
         self._test_instance_groups(
@@ -4014,6 +4014,9 @@ class GetStepLogInterpretationTestCase(MockBoto3TestCase):
         self._ls_step_stderr_logs = self.start(patch(
             'mrjob.emr.EMRJobRunner._ls_step_stderr_logs'))
 
+        self._interpret_spark_logs = self.start(patch(
+            'mrjob.emr._interpret_spark_logs'))
+
     def test_basic(self):
         runner = EMRJobRunner()
 
@@ -4102,13 +4105,20 @@ class GetStepLogInterpretationTestCase(MockBoto3TestCase):
         self.assertEqual(
             runner._get_step_log_interpretation(
                 log_interpretation, 'spark'),
-            self._interpret_emr_step_syslog.return_value)
+            self._interpret_spark_logs.return_value)
+
+        # shouldn't use partial=True with step logs, there's usually only one
+        # anyhow (this isn't even an option for Hadoop step logs, but for
+        # spark logs it's the same method as for task logs)
+        self._interpret_spark_logs.assert_called_once_with(
+            runner.fs, self._ls_step_stderr_logs.return_value, partial=False)
 
         self.assertFalse(self.log.warning.called)
         self.assertFalse(self._ls_step_syslogs.called)
         self._ls_step_stderr_logs.assert_called_once_with(step_id='s-STEPID')
-        self._interpret_emr_step_syslog.assert_called_once_with(
+        self._interpret_spark_logs(
             runner.fs, self._ls_step_stderr_logs.return_value)
+        self.assertFalse(self._interpret_emr_step_syslog.called)
         self.assertFalse(self._interpret_emr_step_stderr.called)
 
 
@@ -4224,6 +4234,9 @@ class EMRApplicationsTestCase(MockBoto3TestCase):
 
 class EMRConfigurationsTestCase(MockBoto3TestCase):
 
+    # don't patch load_opts_from_mrjob_confs()
+    MRJOB_CONF_CONTENTS = None
+
     # example from:
     # http://docs.aws.amazon.com/ElasticMapReduce/latest/ReleaseGuide/emr-configure-apps.html  # noqa
 
@@ -4316,6 +4329,79 @@ class EMRConfigurationsTestCase(MockBoto3TestCase):
             self.assertEqual(runner._opts['emr_configurations'],
                              [CORE_SITE_EMR_CONFIGURATION,
                               HADOOP_ENV_EMR_CONFIGURATION])
+
+    def test_clear_tag(self):
+        # regression test for !clear tag crash #2097
+
+        mrjob_1_conf = self.makefile('mrjob.1.conf', contents="""\
+            runners:
+              emr:
+                emr_configurations:
+                - Classification: spark-defaults
+                  Properties:
+                    spark.executor.memory: 28G
+                - Classification: hive-site
+                  Properties:
+                    hive.metastore.client.factory.class: Bees
+                - Classification: core-site
+                  Properties:
+                    hadoop.security.groups.cache.secs: 250""")
+
+        mrjob_2_conf = self.makefile('mrjob.2.conf', contents="""\
+            runners:
+              emr:
+                emr_configurations: !clear
+                - Classification: spark-defaults
+                  Properties:
+                    spark.executor.memory: 2G""")
+
+        job = MRTwoStepJob(
+            ['-r', 'emr', '-c', mrjob_1_conf, '-c', mrjob_2_conf])
+        job.sandbox()
+
+        with job.make_runner() as runner:
+            self.assertEqual(
+                runner._opts['emr_configurations'],
+                [dict(Classification='spark-defaults',
+                      Properties={'spark.executor.memory': '2G'})])
+
+    def test_overwrite_previous_configurations(self):
+        # regression test for suggested fix to #2097
+
+        mrjob_1_conf = self.makefile('mrjob.1.conf', contents="""\
+            runners:
+              emr:
+                emr_configurations:
+                - Classification: spark-defaults
+                  Properties:
+                    spark.executor.memory: 28G
+                - Classification: hive-site
+                  Properties:
+                    hive.metastore.client.factory.class: Bees
+                - Classification: core-site
+                  Properties:
+                    hadoop.security.groups.cache.secs: 25""")
+
+        mrjob_2_conf = self.makefile('mrjob.2.conf', contents="""\
+            runners:
+              emr:
+                emr_configurations:
+                - Classification: spark-defaults
+                  Properties:
+                    spark.executor.memory: 2G
+                - Classification: hive-site""")
+
+        job = MRTwoStepJob(
+            ['-r', 'emr', '-c', mrjob_1_conf, '-c', mrjob_2_conf])
+        job.sandbox()
+
+        with job.make_runner() as runner:
+            self.assertEqual(
+                runner._opts['emr_configurations'],
+                [dict(Classification='spark-defaults',
+                      Properties={'spark.executor.memory': '2G'}),
+                 dict(Classification='core-site',
+                      Properties={'hadoop.security.groups.cache.secs': '25'})])
 
 
 class GetJobStepsTestCase(MockBoto3TestCase):

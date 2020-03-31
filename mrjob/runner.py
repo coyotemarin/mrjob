@@ -33,6 +33,7 @@ from shutil import rmtree
 from mrjob.compat import translate_jobconf
 from mrjob.compat import translate_jobconf_dict
 from mrjob.compat import translate_jobconf_for_all_versions
+from mrjob.conf import ClearedValue
 from mrjob.conf import combine_jobconfs
 from mrjob.conf import combine_opts
 from mrjob.conf import load_opts_from_mrjob_confs
@@ -427,7 +428,15 @@ class MRJobRunner(object):
                 k = aliased_opt
 
             if k in self.OPT_NAMES:
-                results[k] = None if v is None else self._fix_opt(k, v, source)
+                if v is None:
+                    fixed_v = None
+                elif isinstance(v, ClearedValue):
+                    # _fix_opt() doesn't need to know about !clear (see #2102)
+                    fixed_v = ClearedValue(self._fix_opt(k, v.value, source))
+                else:
+                    fixed_v = self._fix_opt(k, v, source)
+
+                results[k] = fixed_v
             elif v:
                 log.warning('Unexpected option %s (from %s)' % (k, source))
 
@@ -902,7 +911,7 @@ class MRJobRunner(object):
 
         Generally used to determine if we need to install Spark on a cluster.
         """
-        return any(_is_spark_step_type(step['type'])
+        return any(self._step_type_uses_spark(step['type'])
                    for step in self._get_steps())
 
     def _has_pyspark_steps(self):
@@ -911,11 +920,24 @@ class MRJobRunner(object):
 
         Generally used to tell if we need a Spark setup script.
         """
-        return any(self._is_pyspark_step(step) for step in self._get_steps())
+        return any(self._step_type_uses_pyspark(step['type'])
+                   for step in self._get_steps())
 
-    def _is_pyspark_step(self, step):
-        """Does this step involve running Python on Spark?"""
-        return _is_pyspark_step_type(step['type'])
+    def _step_type_uses_spark(self, step_type):
+        """Does this step run on Spark?
+
+        (This is re-defined in the Spark runner to include
+        streaming steps, and used by mrjob.logs.mixin)
+        """
+        return _is_spark_step_type(step_type)
+
+    def _step_type_uses_pyspark(self, step_type):
+        """Does this step involve running Python on Spark?
+
+        (This is re-defined in the Spark runner to include
+        streaming steps, and used by mrjob.logs.mixin)
+        """
+        return _is_pyspark_step_type(step_type)
 
     def _spark_master(self):
         return self._opts.get('spark_master') or 'local[*]'

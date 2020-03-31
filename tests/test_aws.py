@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Copyright 2016-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2016-2018 Yelp
+# Copyright 2019 Yelp and Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ from ssl import SSLError
 from botocore.exceptions import ClientError
 
 from mrjob.aws import _AWS_MAX_TRIES
+from mrjob.aws import _boto3_paginate
 from mrjob.aws import _wrap_aws_client
 from mrjob.aws import EC2_INSTANCE_TYPE_TO_COMPUTE_UNITS
 from mrjob.aws import EC2_INSTANCE_TYPE_TO_MEMORY
@@ -169,3 +170,22 @@ class WrapAWSClientTestCase(MockBoto3TestCase):
         self.sleep.assert_called_with(1000)
 
         self.assertTrue(self.log.info.called)
+
+    def test_retry_during_pagination(self):
+        # regression test for #2005
+        bucket_names = ['walrus%02d' % i for i in range(100)]
+
+        # must set side_effect before adding error
+        self.list_buckets.side_effect = [dict(Buckets=bucket_names)]
+        self.add_transient_error(socket.error(110, 'Connection timed out'))
+
+        # our mock pagination somewhat messes with this test; rather than
+        # getting called once per page of bucket names, list_buckets() only
+        # gets called twice, once to fail with a transient error, and once to
+        # get the full list of buckets, which mock pagination then breaks
+        # into "pages". This still tests the important thing though, which is
+        # that we can retry at all within pagination
+
+        self.assertEqual(list(_boto3_paginate(
+            'Buckets', self.wrapped_client, 'list_buckets')),
+            bucket_names)

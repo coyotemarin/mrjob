@@ -18,14 +18,22 @@
 import getpass
 import os
 import os.path
+import sys
 from contextlib import contextmanager
 from copy import deepcopy
 from io import BytesIO
 from subprocess import PIPE
+from unittest import SkipTest
 
-from google.api_core.exceptions import InvalidArgument
-from google.api_core.exceptions import NotFound
-from google.api_core.exceptions import RequestRangeNotSatisfiable
+try:
+    from google.api_core.exceptions import InvalidArgument
+    from google.api_core.exceptions import NotFound
+    from google.api_core.exceptions import RequestRangeNotSatisfiable
+except ImportError:
+    if sys.version_info[:2] == (3, 4):
+        raise SkipTest('Google libraries are not supported on Python 3.4')
+    else:
+        raise
 
 import mrjob
 import mrjob.dataproc
@@ -497,8 +505,10 @@ class GCEClusterConfigTestCase(MockGoogleTestCase):
 
 class ClusterPropertiesTestCase(MockGoogleTestCase):
 
+    MRJOB_CONF_CONTENTS = None
+
     def _get_cluster_properties(self, *args):
-        job = MRWordCount(['-r', 'dataproc'] + list(args))
+        job = MRWordCount(['--no-conf', '-r', 'dataproc'] + list(args))
         job.sandbox()
 
         with job.make_runner() as runner:
@@ -529,9 +539,7 @@ class ClusterPropertiesTestCase(MockGoogleTestCase):
             b"      'dataproc:dataproc.allow.zero.workers': true\n"
             b"      'hdfs:dfs.namenode.handler.count': 40\n")
 
-        self.mrjob_conf_patcher.stop()
         props = self._get_cluster_properties('-c', conf_path)
-        self.mrjob_conf_patcher.start()
 
         self.assertEqual(props['dataproc:dataproc.allow.zero.workers'], 'true')
         self.assertEqual(props['hdfs:dfs.namenode.handler.count'], '40')
@@ -2256,8 +2264,10 @@ class HadoopStreamingJarTestCase(MockGoogleTestCase):
 
 class NetworkAndSubnetworkTestCase(MockGoogleTestCase):
 
+    MRJOB_CONF_CONTENTS = None
+
     def _get_project_id_and_gce_config(self, *args):
-        job = MRWordCount(['-r', 'dataproc'] + list(args))
+        job = MRWordCount(['--no-conf', '-r', 'dataproc'] + list(args))
         job.sandbox()
 
         with job.make_runner() as runner:
@@ -2344,10 +2354,8 @@ class NetworkAndSubnetworkTestCase(MockGoogleTestCase):
             'mrjob.conf',
             b'runners:\n  dataproc:\n    subnet: default')
 
-        self.mrjob_conf_patcher.stop()
         project_id, gce_config = self._get_project_id_and_gce_config(
             '-c', conf_path, '--network', 'test')
-        self.mrjob_conf_patcher.start()
 
         self.assertEqual(
             gce_config.network_uri,
@@ -2360,10 +2368,8 @@ class NetworkAndSubnetworkTestCase(MockGoogleTestCase):
             'mrjob.conf',
             b'runners:\n  dataproc:\n    network: default')
 
-        self.mrjob_conf_patcher.stop()
         project_id, gce_config = self._get_project_id_and_gce_config(
             '-c', conf_path, '--subnet', 'test')
-        self.mrjob_conf_patcher.start()
 
         self.assertEqual(
             gce_config.subnetwork_uri,

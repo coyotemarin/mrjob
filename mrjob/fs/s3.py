@@ -46,7 +46,6 @@ from mrjob.runner import GLOB_RE
 
 log = logging.getLogger(__name__)
 
-
 # used to disable multipart upload
 _HUGE_PART_SIZE = 2 ** 256
 

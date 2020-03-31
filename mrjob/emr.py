@@ -23,6 +23,7 @@ import pipes
 import posixpath
 import re
 import time
+from collections import OrderedDict
 from collections import defaultdict
 from datetime import datetime
 from datetime import timedelta
@@ -71,8 +72,9 @@ from mrjob.logs.bootstrap import _check_for_nonzero_return_code
 from mrjob.logs.bootstrap import _interpret_emr_bootstrap_stderr
 from mrjob.logs.bootstrap import _ls_emr_bootstrap_stderr_logs
 from mrjob.logs.counters import _pick_counters
-from mrjob.logs.errors import _format_error
+from mrjob.logs.errors import _log_probable_cause_of_failure
 from mrjob.logs.mixin import LogInterpretationMixin
+from mrjob.logs.spark import _interpret_spark_logs
 from mrjob.logs.step import _interpret_emr_step_stderr
 from mrjob.logs.step import _interpret_emr_step_syslog
 from mrjob.logs.step import _ls_emr_step_stderr_logs
@@ -156,7 +158,7 @@ _MAX_MINS_IDLE_BOOTSTRAP_ACTION_PATH = os.path.join(
 _DEFAULT_EMR_REGION = 'us-west-2'
 
 # default AMI to use on EMR. This may be updated with each version
-_DEFAULT_IMAGE_VERSION = '5.16.0'
+_DEFAULT_IMAGE_VERSION = '5.27.0'
 
 # first AMI version that we can't run bash -e on (see #1548)
 _BAD_BASH_IMAGE_VERSION = '5.2.0'
@@ -192,10 +194,6 @@ _MIN_SPARK_PY3_AMI_VERSION = '4.0.0'
 # minutes, but I've seen it take longer on the 4.3.0 AMI. Probably it's
 # 5 minutes plus time to copy the logs, or something like that.
 _S3_LOG_WAIT_MINUTES = 10
-
-# a relatively cheap instance type that's available on all regions
-# and is big enough to support Spark. See #2071.
-_DEFAULT_INSTANCE_TYPE = 'm5.xlarge'
 
 # minimum amount of memory to run spark jobs
 #
@@ -509,6 +507,10 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         if (version_gte(opts['image_version'], '4') and
                 not opts['release_label']):
             opts['release_label'] = 'emr-' + opts['image_version']
+
+        # don't keep two confs with the same Classification (see #2097)
+        opts['emr_configurations'] = _deduplicate_emr_configurations(
+            opts['emr_configurations'])
 
         return opts
 
@@ -1086,9 +1088,18 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             # using *instance_type* here is defensive programming;
             # if set, it should have already been popped into the worker
             # instance type option(s) by _fix_instance_opts() above
-            return self._opts['instance_type'] or 'm5.xlarge'
+            return self._opts['instance_type'] or self._default_instance_type()
         else:
+            return self._default_instance_type()
+
+    def _default_instance_type(self):
+        """Default instance type if not set by the user."""
+        # m5.xlarge is available on all regions, but only works in AMI 5.13.0
+        # or later. See #2098.
+        if self._image_version_gte('5.13.0'):
             return 'm5.xlarge'
+        else:
+            return 'm4.large'
 
     def _instance_is_worker(self, role):
         """Do instances of the given role run tasks? True for non-master
@@ -1736,8 +1747,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             if step['Status']['State'] == 'FAILED':
                 error = self._pick_error(log_interpretation, step_type)
                 if error:
-                    log.error('Probable cause of failure:\n\n%s\n\n' %
-                              _format_error(error))
+                    _log_probable_cause_of_failure(log, error)
 
             raise StepFailedException(
                 step_num=step_num, num_steps=num_steps,
@@ -1915,8 +1925,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         # should be 0 or 1 errors, since we're checking a single stderr file
         if bootstrap_interpretation.get('errors'):
             error = bootstrap_interpretation['errors'][0]
-            log.error('Probable cause of failure:\n\n%s\n\n' %
-                      _format_error(error))
+            _log_probable_cause_of_failure(log, error)
 
     def _ls_bootstrap_stderr_logs(self, action_num=None, node_id=None):
         """_ls_bootstrap_stderr_logs(), with logging for each log we parse."""
@@ -2012,11 +2021,18 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             log.warning("Can't fetch step log; missing step ID")
             return
 
-        if _is_spark_step_type(step_type):
+        if self._step_type_uses_spark(step_type):
             # Spark also has a "controller" log4j log, but it doesn't
             # contain errors or anything else we need
-            return _interpret_emr_step_syslog(
-                self.fs, self._ls_step_stderr_logs(step_id=step_id))
+            #
+            # the step log is unlikely to be very much help because
+            # Spark on EMR runs in cluster mode. See #2056
+            #
+            # there's generally only one log (unless the job has been running
+            # long enough for log rotation), so use partial=False
+            return _interpret_spark_logs(
+                self.fs, self._ls_step_stderr_logs(step_id=step_id),
+                partial=False)
         else:
             return (
                 _interpret_emr_step_syslog(
@@ -3096,6 +3112,26 @@ def _get_reason(cluster_or_step):
     """Get state change reason message."""
     # StateChangeReason is {} before the first state change
     return cluster_or_step['Status']['StateChangeReason'].get('Message', '')
+
+
+def _deduplicate_emr_configurations(emr_configurations):
+    """Takes the value of the *emr_configurations* opt, and ensures that
+    later configs overwrite earlier ones with the same Classification.
+
+    Additionally, any configs that contain empty or unset Properties
+    and Configurations will be removed (this is a way of deleting
+    existing config dicts without replacing them).
+
+    You can assume that all config dicts have run through
+    _fix_configuration_opt()
+    """
+    results = OrderedDict()
+
+    for c in emr_configurations:
+        results[c['Classification']] = c
+
+    return [c for c in results.values() if
+            c['Properties'] or c.get('Configurations')]
 
 
 def _fix_configuration_opt(c):
