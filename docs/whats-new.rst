@@ -4,6 +4,112 @@ What's New
 For a complete list of changes, see `CHANGES.txt
 <https://github.com/Yelp/mrjob/blob/master/CHANGES.txt>`_
 
+.. _v0.7.0:
+
+0.7.0
+-----
+
+AWS and Google are now optional dependencies
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Amazon Web Services (EMR/S3) and Google Cloud are now optional dependencies,
+``aws`` and ``google`` respectively. For example, to install mrjob with
+AWS support, run:
+
+.. code-block:: sh
+
+   pip install mrjob[aws]
+
+non-Python mrjobs are no longer supported
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Fully removed support for writing MRJob scripts in other languages and
+then running them with the mrjob library. (This capability so little used
+that chances are you never knew it existed.)
+
+As a result the `interpreter` and `steps_interpreter` options are gone,
+the :command:`mrjob run` subcommand is gone, and the `MRJobLauncher` class
+has been merged back into `MRJob`. Also removed ``mr_wc.rb`` from
+``mrjob/examples/``
+
+MRSomeJob() means read from sys.argv
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In prior versions, if you initialized a :py:class:`~mrjob.job.MRJob` subclass
+with no arguments (``MRSomeJob()``), that meant the same thing as passing in
+an empty argument list (``MRSomeJob(args=[])``). It now means to read *args*
+directly from ``sys.argv[1:]``.
+
+In practice, it's rare to see ``MRJob`` subclass intialized this way outside
+of test cases. Running a ``MRJob`` script directly, or initializing it
+with an argument list works this same as in previous versions.
+
+mrjob/examples/ love
+^^^^^^^^^^^^^^^^^^^^
+
+The `mrjob.examples package <https://github.com/Yelp/mrjob/tree/master/mrjob/examples>`__ has been updated. Some examples that were
+difficult to test or maintain were removed, and the remainder were tested
+and fixed if necessary.
+
+:py:mod:`mrjob.examples.mr_text_classifier` no longer needs you to encode
+documents in JSON format, and instead operates directly on text files with
+names like ``doc_id-cat_id_1-not_cat_id_2-etc.txt``. Try it out:
+
+.. code-block:: sh
+
+   python -m mrjob.examples.mr_text_classifier docs-to-classify/*.txt
+
+miscellanous tweaks
+^^^^^^^^^^^^^^^^^^^
+
+The :command:`mrjob audit-emr-usage` subcommand no longer attempts to read
+cluster pool names from clusters launched by mrjob v0.5.x.
+
+Method arguments in filesystem classes (in ``mrjob.fs``) are now consistenly
+named. This probably won't matter in practice, as
+``runner.fs <mrjob.runner.MRJobRunner.fs>`` is always a
+:py:class:`~mrjob.fs.composite.CompositeFilesystem` anyhow.
+
+removed deprecated code
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Check your deprecation warnings! Everything marked deprecated in
+mrjob v0.6.x has been removed.
+
+The following runner config options no longer exist: `emr_api_params`,
+`interpreter`, `max_hours_idle`, `mins_to_end_of_hour`, `steps_interpreter`,
+`steps_python_bin`, `visible_to_all_users`.
+
+The following singular switches have been removed in favor of their
+plural alternative (e.g. :command:`--archives`): :command:`--archive`,
+:command:`--dir`, :command:`--file`, :command:`--hadoop-arg`,
+:command:`--libjar`, :command:`--py-file`, :command:`--spark-arg`.
+
+The :command:`--steps` switch is gone. This means :command:`--help --steps`
+no longer works; use :command:`--help -v` to see help for :command:`--mapper`,
+etc.
+
+Support for simulating :mod:`optparse` has been removed from
+:py:class:`~mrjob.job.MRJob`. This includes ``add_file_option()``,
+``add_passthrough_option()``, ``configure_options()``, ``load_options()``,
+``pass_through_option()``, ``self.args``, ``self.OPTION_CLASS``.
+
+:py:meth:`mrjob.job.MRJobRunner.stream_output` and
+:py:meth:`mrjob.job.MRJob.parse_output_line` have been removed.
+
+The constructor for :py:class:`~mrjob.job.runner.MRJobRunner` no longer
+has a *file_upload_args* keyword argument.
+
+``parse_and_save_options()``, ``read_file()``, and ``read_input()`` have
+all been removed from :py:mod:`mrjob.util`.
+
+:py:class:`~mrjob.fs.composite.CompositeFilesystem` no longer takes filesystems
+as arguments to its constructor; use
+:py:meth:`~mrjob.fs.composite.CompositeFilesystem.add_fs`. The useless
+*local_tmp_dir* option to the :py:class:`~mrjob.fs.gcs.GCSFilesystem`
+constructor and the *chunk_size* arg to its
+:py:meth:`~mrjob.fs.gcs.GCSFilesystem.put` method have been removed.
+
 .. _v0.6.12:
 
 0.6.12
@@ -332,7 +438,7 @@ shebangs (e.g. ``#!/bin/sh -ex``) on Linux.
 
 Runners no longer call :py:class:`~mrjob.job.MRJob`\s with ``--steps``;
 instead the job passes its step description to the runner on instantiation.
-``--steps`` and :mrjob-opt:`steps_python_bin` are now deprecated.
+``--steps`` and `steps_python_bin` are now deprecated.
 
 The Hadoop and EMR runner can now set ``SPARK_PYTHON`` and
 ``SPARK_DRIVER_PYTHON`` to different values if need be (e.g. to
@@ -347,7 +453,7 @@ non-streaming steps.
 The Hadoop runner no longer has the :mrjob-opt:`bootstrap_spark` option,
 which did nothing.
 
-:mrjob-opt:`interpreter` and :mrjob-opt:`steps_interpreter` are deprecated,
+`interpreter` and `steps_interpreter` are deprecated,
 in anticipation in removing support for writing MRJobs in other
 programming languages.
 
@@ -744,7 +850,7 @@ The :mrjob-opt:`extra_cluster_params` option allows you to pass arbitrary
 JSON to the API at cluster create time (in Dataproc and EMR). The old
 `emr_api_params` option is deprecated and disabled.
 
-:mrjob-opt:`max_hours_idle` has been replaced with :mrjob-opt:`max_mins_idle`
+`max_hours_idle` has been replaced with :mrjob-opt:`max_mins_idle`
 (the old option is deprecated but still works). The default is 10 minutes.
 Due to a bug, smaller numbers of minutes might cause the cluster to terminate
 before the job runs.
@@ -762,7 +868,7 @@ bills by the second. This means that :ref:`cluster-pooling` is no longer
 a cost-saving strategy, though developers might find it handy to reduce
 wait times when testing.
 
-The :mrjob-opt:`mins_to_end_of_hour` option no longer makes sense, and
+The `mins_to_end_of_hour` option no longer makes sense, and
 has been deprecated and disabled.
 
 :ref:`audit-emr-usage` has been updated to use billing by the second
@@ -809,7 +915,7 @@ enough memory or disk space to run your job.
 
 Errors in bootstrapping scripts are no longer dumped as JSON.
 
-:mrjob-opt:`visible_to_all_users` is deprecated.
+`visible_to_all_users` is deprecated.
 
 Massive purge of deprecated code
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -833,7 +939,7 @@ Python 2.6 and 3.3 are no longer supported.
 rather than crashing.
 
 Since `Amazon no longer bills by the full hour <https://aws.amazon.com/about-aws/whats-new/2017/10/amazon-emr-now-supports-per-second-billing/>`__,
-the :mrjob-opt:`mins_to_end_of_hour` option now defaults to 60, effectively
+the `mins_to_end_of_hour` option now defaults to 60, effectively
 disabling it.
 
 When mrjob passes an environment dictionary to subprocesses, it ensures
@@ -1011,7 +1117,7 @@ and ``~``.
 
 The :ref:`terminate-idle-clusters` tool now works with all step types,
 including Spark. (It's still recommended that you rely on the
-:mrjob-opt:`max_hours_idle` option rather than this tool.)
+`max_hours_idle` option rather than this tool.)
 
 mrjob now works in Anaconda3 Jupyter Notebook.
 
@@ -1094,7 +1200,7 @@ Pooling and idle cluster self-termination
 
 This release resolves a long-standing EMR API race condition that made it
 difficult to use :ref:`cluster-pooling` and idle cluster
-self-termination (see :mrjob-opt:`max_hours_idle`) together. Now if your
+self-termination (see `max_hours_idle`) together. Now if your
 pooled job unknowingly runs on a cluster that was in the process of shutting
 down, it will detect that and re-launch the job on a different cluster.
 
@@ -1204,7 +1310,7 @@ existed on some VPC setups.
 Uploaded files will no longer be given names starting with ``_`` or ``.``,
 since Hadoop's input processing treats these files as "hidden".
 
-The EMR idle cluster self-termination script (see :mrjob-opt:`max_hours_idle`)
+The EMR idle cluster self-termination script (see `max_hours_idle`)
 now only runs on the master node.
 
 The :ref:`audit-emr-usage` command-line tool should no longer constantly
@@ -1462,18 +1568,18 @@ Other changes
 ^^^^^^^^^^^^^
 
  - mrjob now requires ``boto`` 2.35.0 or newer (chances are you're already doing this). Later 0.5.x releases of mrjob may require newer versions of ``boto``.
- - :mrjob-opt:`visible_to_all_users` now defaults to ``True``
+ - `visible_to_all_users` now defaults to ``True``
  - ``HadoopFilesystem.rm()`` uses ``-skipTrash``
  - new :mrjob-opt:`iam_endpoint` option
  - custom :mrjob-opt:`hadoop_streaming_jar`\ s are properly uploaded
  - :py:data:`~mrjob.runner.JOB` :mrjob-opt:`cleanup` on EMR is temporarily disabled
  - mrjob now follows symlinks when :py:meth:`~mrjob.fs.local.LocalFileSystem.ls`\ ing the local filesystem (beware recursive symlinks!)
- - The :mrjob-opt:`interpreter` option disables :mrjob-opt:`bootstrap_mrjob` by default (:mrjob-opt:`interpreter` is meant for non-Python jobs)
+ - The `interpreter` option disables :mrjob-opt:`bootstrap_mrjob` by default (`interpreter` is meant for non-Python jobs)
  - :ref:`cluster-pooling` now respects :mrjob-opt:`ec2_key_pair`
- - cluster self-termination (see :mrjob-opt:`max_hours_idle`) now respects non-streaming jobs
+ - cluster self-termination (see `max_hours_idle`) now respects non-streaming jobs
  - :py:class:`~mrjob.fs.local.LocalFilesystem` now rejects URIs rather than interpreting them as local paths
  - ``local`` and ``inline`` runners no longer have a default :mrjob-opt:`hadoop_version`, instead handling :mrjob-opt:`jobconf` in a version-agnostic way
- - :mrjob-opt:`steps_python_bin` now defaults to the current Python interpreter.
+ - `steps_python_bin` now defaults to the current Python interpreter.
  - minor changes to :py:mod:`mrjob.util`:
 
    - :py:func:`~mrjob.util.file_ext` takes filename, not path
@@ -1665,12 +1771,12 @@ in memory, such as:
 * Running a window of fixed length over an arbitrary amount of sorted
   values (e.g. a 24-hour window over timestamped log data).
 
-The :mrjob-opt:`max_hours_idle` option allows you to spin up EMR job flows
+The `max_hours_idle` option allows you to spin up EMR job flows
 that will terminate themselves after being idle for a certain amount of time,
 in a way that optimizes EMR/EC2's full-hour billing model.
 
 For development (not production), we now recommend always using
-:ref:`job flow pooling <cluster-pooling>`, with :mrjob-opt:`max_hours_idle`
+:ref:`job flow pooling <cluster-pooling>`, with `max_hours_idle`
 enabled. Update your :ref:`mrjob.conf <mrjob.conf>` like this:
 
 .. code-block:: yaml
@@ -1682,7 +1788,7 @@ enabled. Update your :ref:`mrjob.conf <mrjob.conf>` like this:
 
 .. warning::
 
-   If you enable pooling *without* :mrjob-opt:`max_hours_idle` (or
+   If you enable pooling *without* `max_hours_idle` (or
    cronning :py:mod:`~mrjob.tools.emr.terminate_idle_job_flows`), pooled job
    flows will stay active forever, costing you money!
 

@@ -1,7 +1,7 @@
 # Copyright 2011 Yelp
 # Copyright 2012 Yelp and Contributors
-# Copyright 2015-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -663,25 +663,7 @@ class ClusterToFullSummaryTestCase(BasicTestCase):
             }],
         })
 
-    def test_pooled_cluster(self):
-        self._test_new_or_legacy_pooled_cluster(Tags=[
-            dict(Key='__mrjob_pool_hash',
-                 Value='0123456789abcdef0123456789abcdef'),
-            dict(Key='__mrjob_pool_name',
-                 Value='reflecting'),
-        ])
-
-    def test_legacy_pooled_cluster(self):
-        # audit clusters from previous versions of mrjob
-        self._test_new_or_legacy_pooled_cluster(
-            BootstrapActions=[
-                dict(Args=[], Name='empty'),
-                dict(Args=['pool-0123456789abcdef0123456789abcdef',
-                           'reflecting'], Name='master'),
-            ],
-        )
-
-    def _test_new_or_legacy_pooled_cluster(self, **kwargs):
+    def test_pooled_cluster(self, **kwargs):
         # same as test case above with different job keys
         cluster = dict(
             Id='j-ISFORJOB',
@@ -725,7 +707,12 @@ class ClusterToFullSummaryTestCase(BasicTestCase):
                     ),
                 ),
             ],
-            **kwargs
+            Tags=[
+                dict(Key='__mrjob_pool_hash',
+                     Value='0123456789abcdef0123456789abcdef'),
+                dict(Key='__mrjob_pool_name',
+                     Value='reflecting'),
+            ],
         )
 
         summary = _cluster_to_full_summary(cluster)

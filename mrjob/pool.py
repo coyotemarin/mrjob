@@ -1,8 +1,8 @@
 # Copyright 2012 Yelp and Contributors
 # Copyright 2013 Lyft
 # Copyright 2014 Brett Gibson
-# Copyright 2015-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -53,17 +53,6 @@ def _pool_hash_and_name(cluster):
     ``(None, None)`` if it isn't pooled."""
     tags = _extract_tags(cluster)
     return tags.get('__mrjob_pool_hash'), tags.get('__mrjob_pool_name')
-
-
-def _legacy_pool_hash_and_name(bootstrap_actions):
-    """Get pool hash and name from a pre-v0.6.0 job."""
-    for ba in bootstrap_actions:
-        if ba['Name'] == 'master':
-            args = ba['Args']
-            if len(args) == 2 and args[0].startswith('pool-'):
-                return args[0][5:], args[1]
-
-    return None, None
 
 
 ### instance groups ###

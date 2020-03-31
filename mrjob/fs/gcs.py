@@ -56,7 +56,6 @@ def _path_glob_to_parsed_gcs_uri(path_glob):
 class GCSFilesystem(Filesystem):
     """Filesystem for Google Cloud Storage (GCS) URIs
 
-    :param local_tmp_dir: deprecated, does nothing, do not use
     :param credentials: an optional
                         :py:class:`google.auth.credentials.Credentials`, used
                         to initialize the storage client
@@ -66,22 +65,22 @@ class GCSFilesystem(Filesystem):
     :param location: Default location to use when creating a bucket
     :param object_ttl_days: Default object expiry for newly created buckets
 
+    .. versionchanged:: 0.7.0
+
+       removed *local_tmp_dir*
+
     .. versionchanged:: 0.6.8
 
        deprecated *local_tmp_dir*, added *part_size*, *location*,
        *object_ttl_days*
     """
-    def __init__(self, local_tmp_dir=None, credentials=None, project_id=None,
+    def __init__(self, credentials=None, project_id=None,
                  part_size=None, location=None, object_ttl_days=None):
         self._credentials = credentials
         self._project_id = project_id
         self._part_size = part_size
         self._location = location
         self._object_ttl_days = object_ttl_days
-
-        if local_tmp_dir is not None:
-            log.warning('local_tmp_dir does nothing and will be removed'
-                        'in v0.7.0')
 
     @property
     def client(self):
@@ -154,8 +153,8 @@ class GCSFilesystem(Filesystem):
             raise IOError('Object %r does not exist' % (path,))
         return binascii.hexlify(b64decode(blob.md5_hash)).decode('ascii')
 
-    def _cat_file(self, gcs_uri):
-        return decompress(self._cat_blob(gcs_uri), gcs_uri)
+    def _cat_file(self, path):
+        return decompress(self._cat_blob(path), path)
 
     def _cat_blob(self, gcs_uri):
         """:py:meth:`cat_file`, minus decompression."""
@@ -180,12 +179,12 @@ class GCSFilesystem(Filesystem):
 
             start = end
 
-    def mkdir(self, dest):
+    def mkdir(self, path):
         """Does not actually create a directory on GCS (because GCS doesn't
         have directories), but creates the underlying bucket if it does not
         exist already.
         """
-        bucket_name, base_name = parse_gcs_uri(dest)
+        bucket_name, base_name = parse_gcs_uri(path)
 
         try:
             self.get_bucket(bucket_name)
@@ -209,36 +208,31 @@ class GCSFilesystem(Filesystem):
         for uri, blob in self._ls(path_glob):
             blob.delete()
 
-    def touchz(self, dest_uri):
+    def touchz(self, path):
         # check if already exists
-        old_blob = self._get_blob(dest_uri)
+        old_blob = self._get_blob(path)
         if old_blob:
-            raise IOError('Non-empty file %r already exists!' % (dest_uri,))
+            raise IOError('Non-empty file %r already exists!' % (path,))
 
-        self._blob(dest_uri).upload_from_string(b'')
+        self._blob(path).upload_from_string(b'')
 
-    def put(self, src_path, dest_uri, chunk_size=None):
+    def put(self, src, path):
         """Uploads a local file to a specific destination.
 
-        *chunk_size* is a deprecated alias for *part_size*
-        (in the constructor) and will be removed in v0.7.0.
+        .. versionchanged::
+
+           0.7.0 removed *chunk_size* arg (use *part_size*
+           in the constructor)
 
         .. versionchanged:: 0.6.8 deprecated *chunk_size*
         """
         part_size = self._part_size
 
-        # support old way of setting *part_size* at call time
-        if chunk_size:
-            log.warning('chunk_size is deprecated and will be removed in'
-                        ' v0.7.0 (set part_size at init time).')
-            part_size = chunk_size
-
-        old_blob = self._get_blob(dest_uri)
+        old_blob = self._get_blob(path)
         if old_blob:
-            raise IOError('File already exists: %s' % dest_uri)
+            raise IOError('File already exists: %s' % path)
 
-        self._blob(dest_uri, chunk_size=part_size).upload_from_filename(
-            src_path)
+        self._blob(path, chunk_size=part_size).upload_from_filename(src)
 
     def get_all_bucket_names(self, prefix=None):
         """Yield the names of all buckets associated with this client.

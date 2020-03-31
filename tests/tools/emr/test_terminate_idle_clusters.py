@@ -1,8 +1,8 @@
 # Copyright 2009-2012 Yelp
 # Copyright 2013 Lyft
 # Copyright 2014 Marc Abramowitz
-# Copyright 2015-2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ from mrjob.aws import _boto3_now
 from mrjob.fs.s3 import S3Filesystem
 from mrjob.pool import _pool_hash_and_name
 from mrjob.py2 import StringIO
-from mrjob.tools.emr.terminate_idle_clusters import main
 from mrjob.tools.emr.terminate_idle_clusters import _maybe_terminate_clusters
 from mrjob.tools.emr.terminate_idle_clusters import _is_cluster_bootstrapping
 from mrjob.tools.emr.terminate_idle_clusters import _is_cluster_done
@@ -734,21 +733,3 @@ class DeprecatedSwitchesTestCase(SandboxedTestCase):
 
         self.log = self.start(
             patch('mrjob.tools.emr.terminate_idle_clusters.log'))
-
-    def test_deprecated_max_hours_idle(self):
-        main(['--max-hours-idle', '2'])
-
-        self.assertEqual(
-            self._maybe_terminate_clusters.call_args[1]['max_mins_idle'],
-            120)
-
-        self.assertTrue(self.log.warning.called)
-
-    def test_deprecated_mins_to_end_of_hour(self):
-        main(['--mins-to-end-of-hour', '5'])
-
-        self.assertNotIn(
-            'mins_to_end_of_hour',
-            self._maybe_terminate_clusters.call_args[1])
-
-        self.assertTrue(self.log.warning.called)

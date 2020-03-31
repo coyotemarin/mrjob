@@ -1,4 +1,5 @@
 # Copyright 2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +26,7 @@ from tests.job import run_job
 class MRPhoneToURLTestCase(SandboxedTestCase):
 
     def test_empty(self):
-        self.assertEqual(run_job(MRPhoneToURL()), {})
+        self.assertEqual(run_job(MRPhoneToURL([])), {})
 
     def test_three_pages(self):
         wet1 = BytesIO()

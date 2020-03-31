@@ -1,5 +1,6 @@
 # Copyright 2009-2013 Yelp and Contributors
 # Copyright 2015-2017 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -159,8 +160,6 @@ class StandardJSONValueProtocol(object):
 class RapidJSONProtocol(_KeyCachingProtocol):
     """Implements :py:class:`JSONProtocol` using the :py:mod:`rapidjson`
     library.
-
-    .. versionadded:: 0.5.10
     """
     # rapidjson only exists in Python 3, so no special cases for Python 3
 
@@ -174,8 +173,6 @@ class RapidJSONProtocol(_KeyCachingProtocol):
 class RapidJSONValueProtocol(object):
     """Implements :py:class:`JSONValueProtocol` using the :py:mod:`rapidjson`
     library.
-
-    .. versionadded:: 0.5.10
     """
     # rapidjson only exists in Python 3, so no special cases for Python 3
 

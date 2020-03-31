@@ -1,4 +1,5 @@
 # Copyright 2016 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,7 +38,7 @@ def main():
     # lines.flatMap(WORD_RE.findall) doesn't work on Spark 1.6.2; apparently
     # it can't serialize instance methods?
     counts = (
-        lines.flatMap(lambda line: WORD_RE.findall(line))
+        lines.flatMap(lambda line: [w.lower() for w in WORD_RE.findall(line)])
         .map(lambda word: (word, 1))
         .reduceByKey(add))
 

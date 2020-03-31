@@ -1,4 +1,5 @@
 # Copyright 2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +21,7 @@ from tests.sandbox import BasicTestCase
 class MRMostUsedWordTestCase(BasicTestCase):
 
     def test_empty(self):
-        self.assertEqual(run_job(MRMostUsedWord()), {})
+        self.assertEqual(run_job(MRMostUsedWord([])), {})
 
     def test_ignore_stop_words(self):
         RAW_INPUT = b"""
@@ -33,5 +34,5 @@ class MRMostUsedWordTestCase(BasicTestCase):
             None: u'car',
         }
 
-        self.assertEqual(run_job(MRMostUsedWord(), RAW_INPUT),
+        self.assertEqual(run_job(MRMostUsedWord([]), RAW_INPUT),
                          EXPECTED_OUTPUT)

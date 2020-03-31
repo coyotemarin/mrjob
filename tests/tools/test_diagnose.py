@@ -1,5 +1,5 @@
-# Copyright 2017 Yelp
-# Copyright 2018 Yelp
+# Copyright 2017-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,8 +33,7 @@ class StepPickingTestCase(MockBoto3TestCase):
             patch('mrjob.tools.diagnose.log'))
 
         # don't print logging messages when we start the diagnose tool
-        self.log_to_stream = self.start(
-            patch('mrjob.launch.log_to_stream'))
+        self.log_to_stream = self.start(patch('mrjob.job.log_to_stream'))
 
     def test_single_failed_step(self):
         self.mock_emr_clusters['j-MOCKCLUSTER0'] = dict(

@@ -6,7 +6,7 @@ mrjob: the Python MapReduce library
 mrjob is a Python 2.7/3.4+ package that helps you write and run Hadoop
 Streaming jobs.
 
-`Stable version (v0.6.12) documentation <http://mrjob.readthedocs.org/en/stable/>`_
+`Stable version (v0.7.0) documentation <http://mrjob.readthedocs.org/en/stable/>`_
 
 `Development version documentation <http://mrjob.readthedocs.org/en/latest/>`_
 
@@ -41,21 +41,20 @@ Some important features:
 Installation
 ------------
 
-From PyPI:
-
 ``pip install mrjob``
 
-From source:
+As of v0.7.0, Amazon Web Services and Google Cloud Services are optional
+depedencies. To use these, install with the ``aws`` and ``google`` targets,
+respectively. For example:
 
-``python setup.py install``
-
+``pip install mrjob[aws]``
 
 A Simple Map Reduce Job
 -----------------------
 
 Code for this example and more live in ``mrjob/examples``.
 
-::
+.. code-block:: python
 
    """The classic MapReduce job: count the frequency of words.
    """
@@ -141,7 +140,7 @@ Project Links
 -------------
 
 * `Source code <http://github.com/Yelp/mrjob>`__
-* `Documentation <http://packages.python.org/mrjob/>`_
+* `Documentation <https://mrjob.readthedocs.io/en/latest/>`_
 * `Discussion group <http://groups.google.com/group/mrjob>`_
 
 Reference

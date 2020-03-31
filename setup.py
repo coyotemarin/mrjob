@@ -24,15 +24,15 @@ try:
     # arguments that distutils doesn't understand
     setuptools_kwargs = {
         'extras_require': {
+            'aws': [
+                'boto3>=1.4.6',
+                'botocore>=1.6.0',
+            ],
+            'simplejson': ['simplejson'],
             'ujson': ['ujson'],
         },
         'install_requires': [
-            'boto3>=1.4.6',
-            'botocore>=1.6.0',
             'PyYAML>=3.10',
-            'google-cloud-dataproc>=0.3.0',
-            'google-cloud-logging>=1.9.0',
-            'google-cloud-storage>=1.13.1',
             'requests',  # required for Affirm fork
         ],
         'provides': ['mrjob'],
@@ -50,20 +50,21 @@ try:
     # reason we support Python 3.4 at all is to support earlier
     # AMIs on EMR. See #2090
     if sys.version_info[0] == 2 or sys.version_info >= (3, 5):
-        setuptools_kwargs['install_requires'].extend([
+        setuptools_kwargs['extras_require']['google'] = [
             'google-cloud-dataproc>=0.3.0',
             'google-cloud-logging>=1.9.0',
             'google-cloud-storage>=1.13.1',
-        ])
+        ]
 
         # grpcio 1.11.0 and 1.12.0 seem not to compile with PyPy
         if hasattr(sys, 'pypy_version_info'):
-            setuptools_kwargs['install_requires'].append('grpcio<=1.10.0')
+            setuptools_kwargs['extras_require']['google'].append(
+                'grpcio<=1.10.0')
 
     # rapidjson exists on Python 3 only
     if sys.version_info >= (3, 0):
-        setuptools_kwargs['extras_require']['rapidjson'] = ['rapidjson']
-        setuptools_kwargs['tests_require'].append('rapidjson')
+        setuptools_kwargs['extras_require']['rapidjson'] = ['python-rapidjson']
+        setuptools_kwargs['tests_require'].append('python-rapidjson')
 
     # don't try to install latest PyYAML on Python 3.4
     if sys.version_info[:2] == (3, 4):
@@ -112,8 +113,6 @@ setup(
     packages=[
         'mrjob',
         'mrjob.examples',
-        'mrjob.examples.mr_postfix_bounce',
-        'mrjob.examples.mr_travelling_salesman',
         'mrjob.fs',
         'mrjob.logs',
         'mrjob.spark',
@@ -122,8 +121,7 @@ setup(
     ],
     package_data={
         'mrjob': ['bootstrap/*.sh'],
-        'mrjob.examples': ['*.txt', '*.jar', '*.rb'],
-        'mrjob.examples.mr_postfix_bounce': ['*.json'],
+        'mrjob.examples': ['*.txt', '*.jar', '*.rb', 'docs-to-classify/*.txt'],
         'mrjob.examples.mr_travelling_salesman': ['example_graphs/*.json'],
     },
     url='http://github.com/Yelp/mrjob',

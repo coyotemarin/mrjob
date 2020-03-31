@@ -1,6 +1,7 @@
 # Copyright 2009-2013 Yelp and Contributors
 # Copyright 2015-2017 Yelp
-# Copyright 2018 Alibaba, Inc.
+# Copyright 2018 Yelp and Contributors
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -50,7 +51,6 @@ class ClusterInspectionTestCase(ToolTestCase):
                 'ec2_endpoint': None,
                 'ec2_key_pair': None,
                 'emr_action_on_failure': None,
-                'emr_api_params': None,
                 'emr_configurations': None,
                 'emr_endpoint': None,
                 'enable_emr_debugging': None,
@@ -67,8 +67,6 @@ class ClusterInspectionTestCase(ToolTestCase):
                 'master_instance_bid_price': None,
                 'master_instance_type': None,
                 'max_mins_idle': None,
-                'max_hours_idle': None,
-                'mins_to_end_of_hour': None,
                 'num_core_instances': None,
                 'num_task_instances': None,
                 'owner': None,
@@ -81,7 +79,6 @@ class ClusterInspectionTestCase(ToolTestCase):
                 'tags': None,
                 'task_instance_bid_price': None,
                 'task_instance_type': None,
-                'visible_to_all_users': None,
                 'zone': None,
             })
 

@@ -46,7 +46,6 @@ Parsing output
 --------------
 
 .. automethod:: MRJob.parse_output
-.. automethod:: MRJob.parse_output_line
 
 Counters and status messages
 ----------------------------
@@ -111,7 +110,6 @@ Running specific parts of jobs
 .. automethod:: MRJob.reduce_pairs
 .. automethod:: MRJob.run_combiner
 .. automethod:: MRJob.combine_pairs
-.. automethod:: MRJob.show_steps
 
 .. _hadoop-config:
 

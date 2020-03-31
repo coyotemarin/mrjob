@@ -1,6 +1,7 @@
 # Copyright 2012 Yelp
 # Copyright 2014 Yelp and Contributors
 # Copyright 2015-2018 Yelp
+# Copyright 2019 Yelp
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -65,12 +66,6 @@ def main(args=None):
         _error('"%s" is not a command' % args[1])
     else:
         commands[args[1]](args[2:])
-
-
-@_command('run', 'Run a job')
-def _run(args):
-    from mrjob.launch import MRJobLauncher
-    MRJobLauncher(args=args, from_cl=True).run_job()
 
 
 @_command('audit-emr-usage', 'Audit EMR usage')

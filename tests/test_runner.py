@@ -277,23 +277,8 @@ class TestCatOutput(SandboxedTestCase):
 
         runner = InlineMRJobRunner(conf_paths=[], output_dir=output_dir)
 
-        self.assertEqual(sorted(to_lines(runner.stream_output())),
+        self.assertEqual(sorted(to_lines(runner.cat_output())),
                          [b'cats\n'])
-
-    def test_deprecated_stream_output(self):
-        self.makefile(os.path.join(self.output_dir, 'part-00000'),
-                      b'1\n2')
-        self.makefile(os.path.join(self.output_dir, 'part-00001'),
-                      b'3\n4\n')
-
-        log = self.start(patch('mrjob.runner.log'))
-
-        # should group output into lines, but not join across files
-        self.assertEqual(sorted(self.runner.stream_output()),
-                         [b'1\n', b'2', b'3\n', b'4\n'])
-
-        # should issue deprecation warning
-        self.assertEqual(log.warning.call_count, 1)
 
 
 class CheckInputPathsTestCase(SandboxedTestCase):
@@ -324,7 +309,7 @@ class CheckInputPathsTestCase(SandboxedTestCase):
             self.assertRaises(StopIteration, runner.run)
 
     def test_stdin_is_fine(self):
-        job = MRWordCount()
+        job = MRWordCount([])
         job.sandbox()
 
         with job.make_runner() as runner:
@@ -338,7 +323,7 @@ class CheckInputPathsTestCase(SandboxedTestCase):
             runner.run()
 
     def test_check_input_paths_enabled_by_default(self):
-        job = MRWordCount()
+        job = MRWordCount([])
         with job.make_runner() as runner:
             self.assertTrue(runner._opts['check_input_paths'])
 
@@ -348,7 +333,7 @@ class CheckInputPathsTestCase(SandboxedTestCase):
             self.assertFalse(runner._opts['check_input_paths'])
 
     def test_can_disable_check_input_paths_in_config(self):
-        job = MRWordCount()
+        job = MRWordCount([])
         with mrjob_conf_patcher(
                 {'runners': {'inline': {'check_input_paths': False}}}):
             with job.make_runner() as runner:
@@ -358,7 +343,7 @@ class CheckInputPathsTestCase(SandboxedTestCase):
 class ClosedRunnerTestCase(EmptyMrjobConfTestCase):
 
     def test_job_closed_on_cleanup(self):
-        job = MRWordCount()
+        job = MRWordCount([])
         with job.make_runner() as runner:
             # do nothing
             self.assertFalse(runner._closed)
@@ -973,28 +958,6 @@ class OptDebugPrintoutTestCase(ConfigFilesTestCase):
         self.assertIn("'dave'", debug)
 
 
-class DeprecatedFileUploadArgsTestCase(SandboxedTestCase):
-
-    def setUp(self):
-        super(DeprecatedFileUploadArgsTestCase, self).setUp()
-
-        self.log = self.start(patch('mrjob.runner.log'))
-
-    def test_deprecated_file_upload_args(self):
-        old_runner = InlineMRJobRunner(
-            file_upload_args=[('--foo-config', '/tmp/.fooconf#dot-fooconf')])
-
-        new_runner = InlineMRJobRunner(
-            extra_args=['--foo-config', dict(
-                path='/tmp/.fooconf', name='dot-fooconf', type='file')])
-
-        self.assertEqual(old_runner._extra_args, new_runner._extra_args)
-        self.assertEqual(old_runner._working_dir_mgr._name_to_typed_path,
-                         new_runner._working_dir_mgr._name_to_typed_path)
-
-        self.assertTrue(self.log.warning.called)
-
-
 # job that improperly uses mapper_raw on a step other than the first
 class MRPhoneToURLToPhoneToURL(MRPhoneToURL):
     def steps(self):
@@ -1075,7 +1038,7 @@ class PassStepsToRunnerTestCase(BasicTestCase):
         self.log = self.start(patch('mrjob.runner.log'))
 
     def test_job_passes_in_steps(self):
-        job = MRWordCount()
+        job = MRWordCount([])
         job.sandbox()
 
         with job.make_runner() as runner:
@@ -1084,18 +1047,6 @@ class PassStepsToRunnerTestCase(BasicTestCase):
             runner.run()
 
             self.assertFalse(self.log.warning.called)
-
-    def test_load_steps(self):
-        job = MRWordCount()
-        job.sandbox()
-
-        with job.make_runner() as runner:
-            runner._steps = None
-
-            runner.run()
-
-            self.assertTrue(runner._steps)
-            self.assertTrue(self.log.warning.called)
 
     def test_command_steps(self):
         job = MRCatsJob(['-r', 'local', '--num-cats', '3'])
@@ -1109,7 +1060,7 @@ class PassStepsToRunnerTestCase(BasicTestCase):
             self.assertFalse(self.log.warning.called)
 
     def test_no_steps(self):
-        job = MRJob()
+        job = MRJob([])
         job.sandbox()
 
         # it's possible to make a runner with the base MRJob, but it has
@@ -1134,7 +1085,7 @@ class TestStepsWithoutMRJobScript(MockBoto3TestCase):
 
     def test_classic_streaming_step_without_mr_job_script(self):
         # classic MRJob mappers and reducers require a MRJob script
-        steps = MRWordCount()._steps_desc()
+        steps = MRWordCount([])._steps_desc()
 
         self.assertRaises(ValueError,
                           LocalMRJobRunner,
@@ -1159,7 +1110,7 @@ class TestStepsWithoutMRJobScript(MockBoto3TestCase):
         runner.cleanup()
 
     def test_spark_step_without_mr_job_script(self):
-        steps = MRNullSpark()._steps_desc()
+        steps = MRNullSpark([])._steps_desc()
 
         # need to be able to call the script's spark() method
         self.assertRaises(ValueError,
@@ -1187,7 +1138,7 @@ class TestStepsWithoutMRJobScript(MockBoto3TestCase):
 class UnsupportedStepsTestCase(MockBoto3TestCase):
 
     def test_base_classes_cant_have_steps(self):
-        steps = MRTwoStepJob()._steps_desc()
+        steps = MRTwoStepJob([])._steps_desc()
 
         self.assertRaises(NotImplementedError, MRJobRunner, steps=steps)
 
@@ -1279,7 +1230,7 @@ class SparkScriptArgsTestCase(SandboxedTestCase):
             {'spark', 'spark_jar', 'spark_script', 'streaming'}))
 
     def test_spark_mr_job(self):
-        job = MRNullSpark()
+        job = MRNullSpark([])
         job.sandbox()
 
         with job.make_runner() as runner:
@@ -1360,7 +1311,7 @@ class SparkScriptArgsTestCase(SandboxedTestCase):
                 ['<step 0 output>', '<step 0 input>'])
 
     def test_streaming_step_not_okay(self):
-        job = MRTwoStepJob()
+        job = MRTwoStepJob([])
         job.sandbox()
 
         with job.make_runner() as runner:

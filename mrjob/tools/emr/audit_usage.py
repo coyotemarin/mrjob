@@ -24,6 +24,10 @@ Options::
   -c CONF_PATHS, --conf-path CONF_PATHS
                         Path to alternate mrjob.conf file to read from
   --no-conf             Don't load mrjob.conf even if it's available
+  --ec2-endpoint EC2_ENDPOINT
+                        Force mrjob to connect to EC2 on this endpoint (e.g.
+                        ec2.us-west-1.amazonaws.com). Default is to infer this
+                        from region.
   --emr-endpoint EMR_ENDPOINT
                         Force mrjob to connect to EMR on this endpoint (e.g.
                         us-west-1.elasticmapreduce.amazonaws.com). Default is
@@ -63,7 +67,6 @@ from mrjob.options import _add_basic_args
 from mrjob.options import _add_runner_args
 from mrjob.options import _alphabetize_actions
 from mrjob.options import _filter_by_role
-from mrjob.pool import _legacy_pool_hash_and_name
 from mrjob.pool import _pool_hash_and_name
 from mrjob.util import strip_microseconds
 
@@ -132,8 +135,7 @@ def _runner_kwargs(options):
 def _clusters_to_stats(clusters, now=None):
     r"""Aggregate statistics for several clusters into a dictionary.
 
-    :param clusters: a sequence of dicts with the keys ``bootstrap_actions``,
-                     ``cluster``, ``steps``.
+    :param clusters: a sequence of dicts with the keys ``cluster``, ``steps``.
     :param now: the current UTC time, as a :py:class:`datetime.datetime`.
                 Defaults to the current time.
 
@@ -339,9 +341,6 @@ def _cluster_to_basic_summary(cluster, now=None):
     bcs['num_steps'] = len(cluster['Steps'])
 
     _, bcs['pool'] = _pool_hash_and_name(cluster)
-    if not bcs['pool']:
-        _, bcs['pool'] = _legacy_pool_hash_and_name(
-            cluster['BootstrapActions'])
 
     m = _JOB_KEY_RE.match(bcs['name'] or '')
     if m:
@@ -619,10 +618,6 @@ def _yield_clusters(max_days_ago=None, now=None, **runner_kwargs):
         cluster['Steps'] = list(reversed(list(_boto3_paginate(
             'Steps', emr_client, 'list_steps',
             ClusterId=cluster_id, _delay=_DELAY))))
-
-        cluster['BootstrapActions'] = list(_boto3_paginate(
-            'BootstrapActions', emr_client, 'list_bootstrap_actions',
-            ClusterId=cluster_id, _delay=_DELAY))
 
         yield cluster
 

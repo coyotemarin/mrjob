@@ -69,6 +69,7 @@ __credits__ = [
     'Matt Jones <matt@mhjones.org>',
     'Mike Kaplinskiy <mkaplinskiy@twitter.com>',
     'Kamil Kisiel <kamil@kamilkisiel.net>',
+    'Susannah Klaneček <suzil@protonmail.ch>',
     'Evan Klitzke <evan@eklitzke.org>',
     'Alex Konradi <alexkonradi@gmail.com>',
     'Nikolaos Koutsopoulos <nhk@mochimedia.com>',
@@ -138,4 +139,4 @@ __credits__ = [
     'drulludanni <drulludanni5@gmail.com>',
 ]
 
-__version__ = '0.6.12+affirm.1.1.0'
+__version__ = '0.7.0+affirm.1.1.0'
