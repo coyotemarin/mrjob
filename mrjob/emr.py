@@ -2627,43 +2627,32 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
 
         :return: -1 on failure or num_steps_in_cluster on success
         """
+        steps = list(_boto3_paginate(
+            'Steps',
+            emr_client, 'list_steps', ClusterId=cluster['Id']))
+
         if self._opts['release_label']:
             max_steps = _4_X_MAX_STEPS
-            allows_unlimited_steps = True
         else:
             image_version = cluster.get('RunningAmiVersion', '')
             max_steps = map_version(image_version, _IMAGE_VERSION_TO_MAX_STEPS)
-            allows_unlimited_steps = False
 
-        if self._opts['no_steps_limit'] and allows_unlimited_steps:
-           steps = list(_boto3_paginate(
-               'Steps',
-               emr_client, 'list_steps',
-               ClusterId=cluster['Id'], StepStates=['RUNNING', 'PENDING']))
-           if steps:
-               log.debug('    unfinished steps')
-               return -1
-        else:
-            steps = list(_boto3_paginate(
-                'Steps',
-                emr_client, 'list_steps', ClusterId=cluster['Id']))
+        # don't add more steps than EMR will allow/display through the API
+        if len(steps) + num_steps > max_steps:
+            log.debug('    no room for our steps')
+            return -1
 
-            # don't add more steps than EMR will allow/display through the API
-            if len(steps) + num_steps > max_steps:
-                log.debug('    no room for our steps')
+        # in rare cases, cluster can be WAITING *and* have incomplete
+        # steps. We could just check for PENDING steps, but we're
+        # trying to be defensive about EMR adding a new step state.
+        # Not entirely sure what to make of CANCEL_PENDING
+        for step in steps:
+            if (step['Status']['State'] not in (
+                    'CANCELLED', 'INTERRUPTED') and
+                    not step['Status'].get('Timeline', {}).get(
+                        'EndDateTime')):
+                log.debug('    unfinished steps')
                 return -1
-
-            # in rare cases, cluster can be WAITING *and* have incomplete
-            # steps. We could just check for PENDING steps, but we're
-            # trying to be defensive about EMR adding a new step state.
-            # Not entirely sure what to make of CANCEL_PENDING
-            for step in steps:
-                if (step['Status']['State'] not in (
-                        'CANCELLED', 'INTERRUPTED') and
-                        not step['Status'].get('Timeline', {}).get(
-                            'EndDateTime')):
-                    log.debug('    unfinished steps')
-                    return -1
 
         log.debug('    OK - valid cluster state')
         return len(steps)
