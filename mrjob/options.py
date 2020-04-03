@@ -1050,18 +1050,6 @@ _RUNNER_OPTS = dict(
             )),
         ],
     ),
-    no_steps_limit=dict(
-        switches=[
-            (['--no-steps-limit'], dict(
-                action='store_true',
-                help=('It is okay for the earliest steps to stop showing up '
-                      'in the console/API. Feel free to continue adding new '
-                      'steps (this also helps with ListSteps throttling). '
-                      'Ignored for older EMR versions that have a hard limit '
-                      'on the number of steps'),
-            )),
-        ]
-    ),
     num_core_instances=dict(
         cloud_role='launch',
         switches=[
