@@ -33,7 +33,6 @@ try:
             'google-cloud-dataproc>=0.3.0',
             'google-cloud-logging>=1.9.0',
             'google-cloud-storage>=1.13.1',
-            'requests',  # required for Affirm fork
         ],
         'provides': ['mrjob'],
         'test_suite': 'tests',
