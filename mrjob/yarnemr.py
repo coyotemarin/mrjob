@@ -239,7 +239,7 @@ class YarnEMRJobRunner(EMRJobRunner):
                 lock_uri = self._creation_lock_uri('{}_{}'
                                                    .format(*pool_name_hash), i)
                 status = _attempt_to_acquire_lock(
-                            self.fs, lock_uri,
+                            self.fs.s3, lock_uri,
                             self._opts['cloud_fs_sync_secs'],
                             self._job_key,
                             mins_to_expiration=_NEW_CLUSTER_WAIT_MINS)
@@ -419,7 +419,7 @@ class YarnEMRJobRunner(EMRJobRunner):
             if target_cluster_list:
                 for cluster_id in target_cluster_list:
                     status = _attempt_to_acquire_lock(
-                        self.fs, self._scheduling_lock_uri(cluster_id),
+                        self.fs.s3, self._scheduling_lock_uri(cluster_id),
                         self._opts['cloud_fs_sync_secs'], self._job_key,
                         mins_to_expiration=(_LOCK_TIMEOUT_SECS / 60.0))
                     if status:
