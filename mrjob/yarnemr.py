@@ -505,7 +505,7 @@ class YarnEMRJobRunner(EMRJobRunner):
         host = self._address_of_master()
         try:
             log.info('Running %s command over ssh', desc)
-            stdout, stderr = self.fs._ssh_run(host, cmd_args, stdin=stdin)
+            stdout, stderr = self.fs.ssh._ssh_run(host, cmd_args, stdin=stdin)
             return stdout, stderr
         except IOError as ex:
             if log_file:
