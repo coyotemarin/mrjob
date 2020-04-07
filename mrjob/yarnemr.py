@@ -53,7 +53,7 @@ _YRM_BASE_PATH = '/ws/v1/cluster'
 # Therefore, rather than releasing the lock we simply timeout the lock after
 # 10 seconds. Since the lock is only needed to reduce scheduling contention
 # this method is sufficient.
-_LOCK_TIMEOUT = 10
+_LOCK_TIMEOUT_SECS = 10
 
 # The amount of time to wait before re-querying clusters while there are still
 # valid clusters remaining (unlike :py:data:mrjob.emr._POOLING_SLEEP_INTERVAL
@@ -68,7 +68,7 @@ _MAX_APPS_RUNNING = 40
 # Approximate maximum time in seconds to wait while a new cluster is starting
 # and bootstrapping. This is approximate since we only wait to the closest
 # multiple of the option `check_cluster_every` rounded down.
-_NEW_CLUSTER_WAIT_TIME = 1200  # 20 minutes
+_NEW_CLUSTER_WAIT_MINS = 20
 
 # Re-enter the find cluster loop at most this many times after we are unable to
 # find / create a cluster. Once this limit is exceed we raise an exception.
@@ -241,7 +241,8 @@ class YarnEMRJobRunner(EMRJobRunner):
                 status = _attempt_to_acquire_lock(
                             self.fs, lock_uri,
                             self._opts['cloud_fs_sync_secs'],
-                            self._job_key, _NEW_CLUSTER_WAIT_TIME)
+                            self._job_key,
+                            mins_to_expiration=_NEW_CLUSTER_WAIT_MINS)
                 if status:
                     break
             if status:
@@ -402,9 +403,11 @@ class YarnEMRJobRunner(EMRJobRunner):
         log.info('Attempting to find an available cluster...')
         while now <= end_time:
             # remove any cluster from the locked list if it has been there
-            # for more than `_LOCK_TIMEOUT` seconds
-            locked_clusters = [(c, t) for (c, t) in locked_clusters
-                               if now - t < timedelta(seconds=_LOCK_TIMEOUT)]
+            # for more than _LOCK_TIMEOUT_SECS
+            locked_clusters = [
+                (c, t) for (c, t) in locked_clusters
+                if now - t < timedelta(seconds=_LOCK_TIMEOUT_SECS)
+            ]
             target_cluster_list = self._usable_clusters(
                 valid_clusters, invalid_clusters,
                 {l[0] for l in locked_clusters}, resource_constraints)
@@ -418,7 +421,7 @@ class YarnEMRJobRunner(EMRJobRunner):
                     status = _attempt_to_acquire_lock(
                         self.fs, self._scheduling_lock_uri(cluster_id),
                         self._opts['cloud_fs_sync_secs'], self._job_key,
-                        _LOCK_TIMEOUT)
+                        mins_to_expiration=(_LOCK_TIMEOUT_SECS / 60.0))
                     if status:
                         log.info('Acquired lock on cluster %s', cluster_id)
                         return cluster_id
@@ -457,7 +460,7 @@ class YarnEMRJobRunner(EMRJobRunner):
         cluster_id = self._cluster_id
 
         sleep_amount = self._opts['check_cluster_every']
-        max_attempts = _NEW_CLUSTER_WAIT_TIME // sleep_amount
+        max_attempts = _NEW_CLUSTER_WAIT_MINS * 60 // sleep_amount
         num_attempts = 0
 
         while True:
