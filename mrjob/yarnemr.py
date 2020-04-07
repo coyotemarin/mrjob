@@ -297,10 +297,7 @@ class YarnEMRJobRunner(EMRJobRunner):
         """
         host = cluster['MasterPublicDnsName']
         try:
-            metrics_json = self._yrm_get('metrics', host=host)
-            import pdb; pdb.set_trace()
-            metrics = metrics_json['clusterMetrics']
-            #metrics = self._yrm_get('metrics', host=host)['clusterMetrics']
+            metrics = self._yrm_get('metrics', host=host)['clusterMetrics']
         except IOError as ex:
             log.info('    error while querying cluster metrics: {}'.format(
                 str(ex)))
