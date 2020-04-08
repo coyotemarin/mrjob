@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from __future__ import division
+import json
 import logging
 import operator
 import os
@@ -20,7 +21,6 @@ import re
 import time
 from datetime import datetime
 from datetime import timedelta
-from urllib3.exceptions import HTTPError
 
 from mrjob.compat import version_gte
 from mrjob.emr import _attempt_to_acquire_lock
@@ -31,10 +31,9 @@ from mrjob.emr import _make_lock_uri
 from mrjob.emr import _POOLING_SLEEP_INTERVAL
 from mrjob.emr import EMRJobRunner
 from mrjob.pool import _pool_hash_and_name
+from mrjob.py2 import urljoin
 from mrjob.step import _is_spark_step_type
 from mrjob.step import StepFailedException
-from mrjob.yarn_api import YarnResourceManager
-
 
 log = logging.getLogger(__name__)
 
@@ -42,13 +41,19 @@ log = logging.getLogger(__name__)
 # Amount of time in seconds before we timeout yarn api calls.
 _YARN_API_TIMEOUT = 20
 
+# which port to connect to the YARN resource manager on
+_YARN_RESOURCE_MANAGER_PORT = 8088
+
+# base path for YARN resource manager
+_YRM_BASE_PATH = '/ws/v1/cluster'
+
 # We lock scheduling on an entire cluster while scheduling a job on it. This
 # is unlike the EMR cluster which locks at a per-step granularity. As such,
 # there is a risk of starvation if a running process holding a lock is killed.
 # Therefore, rather than releasing the lock we simply timeout the lock after
 # 10 seconds. Since the lock is only needed to reduce scheduling contention
 # this method is sufficient.
-_LOCK_TIMEOUT = 10
+_LOCK_TIMEOUT_SECS = 10
 
 # The amount of time to wait before re-querying clusters while there are still
 # valid clusters remaining (unlike :py:data:mrjob.emr._POOLING_SLEEP_INTERVAL
@@ -63,7 +68,7 @@ _MAX_APPS_RUNNING = 40
 # Approximate maximum time in seconds to wait while a new cluster is starting
 # and bootstrapping. This is approximate since we only wait to the closest
 # multiple of the option `check_cluster_every` rounded down.
-_NEW_CLUSTER_WAIT_TIME = 1200  # 20 minutes
+_NEW_CLUSTER_WAIT_MINS = 20
 
 # Re-enter the find cluster loop at most this many times after we are unable to
 # find / create a cluster. Once this limit is exceed we raise an exception.
@@ -234,9 +239,10 @@ class YarnEMRJobRunner(EMRJobRunner):
                 lock_uri = self._creation_lock_uri('{}_{}'
                                                    .format(*pool_name_hash), i)
                 status = _attempt_to_acquire_lock(
-                            self.fs, lock_uri,
+                            self.fs.s3, lock_uri,
                             self._opts['cloud_fs_sync_secs'],
-                            self._job_key, _NEW_CLUSTER_WAIT_TIME)
+                            self._job_key,
+                            mins_to_expiration=_NEW_CLUSTER_WAIT_MINS)
                 if status:
                     break
             if status:
@@ -288,17 +294,12 @@ class YarnEMRJobRunner(EMRJobRunner):
         :return: The number of available mb on the cluster if the cluster
                  satisfies the constraints and -1 otherwise.
         """
-        # TODO: This assumes the node mrjob is running on can directly
-        #       access the EMR master node on port 8888. We really
-        #       should just run the raw curl over the ssh config, but
-        #       since no one else is using this and our security group
-        #       allows for this, we will just be lazy.
         host = cluster['MasterPublicDnsName']
-        yrm = YarnResourceManager(host, _YARN_API_TIMEOUT)
         try:
-            metrics = yrm.get_cluster_metrics()
-        except HTTPError:
-            log.info('    received exception while querying cluster metrics')
+            metrics = self._yrm_get('metrics', host=host)['clusterMetrics']
+        except IOError as ex:
+            log.info('    error while querying cluster metrics: {}'.format(
+                str(ex)))
             return -1
 
         log.debug('Cluster metrics: {}'.format(metrics))
@@ -402,9 +403,11 @@ class YarnEMRJobRunner(EMRJobRunner):
         log.info('Attempting to find an available cluster...')
         while now <= end_time:
             # remove any cluster from the locked list if it has been there
-            # for more than `_LOCK_TIMEOUT` seconds
-            locked_clusters = [(c, t) for (c, t) in locked_clusters
-                               if now - t < timedelta(seconds=_LOCK_TIMEOUT)]
+            # for more than _LOCK_TIMEOUT_SECS
+            locked_clusters = [
+                (c, t) for (c, t) in locked_clusters
+                if now - t < timedelta(seconds=_LOCK_TIMEOUT_SECS)
+            ]
             target_cluster_list = self._usable_clusters(
                 valid_clusters, invalid_clusters,
                 {l[0] for l in locked_clusters}, resource_constraints)
@@ -416,9 +419,9 @@ class YarnEMRJobRunner(EMRJobRunner):
             if target_cluster_list:
                 for cluster_id in target_cluster_list:
                     status = _attempt_to_acquire_lock(
-                        self.fs, self._scheduling_lock_uri(cluster_id),
+                        self.fs.s3, self._scheduling_lock_uri(cluster_id),
                         self._opts['cloud_fs_sync_secs'], self._job_key,
-                        _LOCK_TIMEOUT)
+                        mins_to_expiration=(_LOCK_TIMEOUT_SECS / 60.0))
                     if status:
                         log.info('Acquired lock on cluster %s', cluster_id)
                         return cluster_id
@@ -457,7 +460,7 @@ class YarnEMRJobRunner(EMRJobRunner):
         cluster_id = self._cluster_id
 
         sleep_amount = self._opts['check_cluster_every']
-        max_attempts = _NEW_CLUSTER_WAIT_TIME // sleep_amount
+        max_attempts = _NEW_CLUSTER_WAIT_MINS * 60 // sleep_amount
         num_attempts = 0
 
         while True:
@@ -502,7 +505,7 @@ class YarnEMRJobRunner(EMRJobRunner):
         host = self._address_of_master()
         try:
             log.info('Running %s command over ssh', desc)
-            stdout, stderr = self.fs._ssh_run(host, cmd_args, stdin=stdin)
+            stdout, stderr = self.fs.ssh._ssh_run(host, cmd_args, stdin=stdin)
             return stdout, stderr
         except IOError as ex:
             if log_file:
@@ -593,11 +596,7 @@ class YarnEMRJobRunner(EMRJobRunner):
 
     def _get_application_info(self):
         """Queries the cluster for state of application."""
-        # TODO: same to-do as _check_cluster_state (run over ssh
-        #       rather than over http)
-        host = self._address_of_master()
-        yrm = YarnResourceManager(host, _YARN_API_TIMEOUT)
-        return yrm.get_application_info(self._appid)
+        return self._yrm_get('apps', self._appid)['app']
 
     def _get_yarn_logs(self):
         """Retrieve YARN application logs. We use the `yarn` cli tool since
@@ -645,3 +644,38 @@ class YarnEMRJobRunner(EMRJobRunner):
                 raise StepFailedException(
                         step_desc='Application {}'.format(self._appid),
                         reason='See logs at {}'.format(tracking_url))
+
+    def _yrm_get(self, *paths, host=None, port=None, timeout=None):
+        """Use curl to perform an HTTP GET on the given path on the
+        YARN Resource Manager. Either return decoded JSON from the call,
+        or raise an IOError
+
+        More info on the YARN REST API can be found here:
+
+        https://hadoop.apache.org/docs/current/hadoop-yarn/
+            hadoop-yarn-site/ResourceManagerRest.html
+        """
+        if host is None:
+            host = self._address_of_master()
+
+        if port is None:
+            port = _YARN_RESOURCE_MANAGER_PORT
+
+        if timeout is None:
+            timeout = _YARN_API_TIMEOUT
+
+        yrm_url = urljoin(
+            'http://{}:{:d}'.format(host, port),
+            '/'.join((_YRM_BASE_PATH,) + paths)
+        )
+
+        curl_args = [
+            'curl',  # always available on EMR
+            '-fsS',  # fail on HTTP errors, print errors only to stderr
+            '-m', str(timeout),  # timeout after 20 seconds
+            yrm_url,
+        ]
+
+        stdout, stderr = self.fs.ssh._ssh_run(host, curl_args)
+
+        return json.loads(stdout)
