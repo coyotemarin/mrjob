@@ -150,6 +150,7 @@ else:
     from urllib.request import pathname2url
     from urllib.parse import urljoin
     from urllib.request import urlopen
+    from urllib.parse import urljoin
     from urllib.parse import urlparse
 ParseResult
 pathname2url
