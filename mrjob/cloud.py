@@ -77,7 +77,6 @@ class HadoopInTheCloudJobRunner(MRJobBinRunner):
         'master_instance_type',
         'max_mins_idle',
         'max_hours_idle',
-        'no_steps_limit',
         'num_core_instances',
         'num_task_instances',
         'region',
@@ -136,7 +135,6 @@ class HadoopInTheCloudJobRunner(MRJobBinRunner):
             dict(
                 cloud_part_size_mb=_DEFAULT_CLOUD_PART_SIZE_MB,
                 max_mins_idle=_DEFAULT_MAX_MINS_IDLE,
-                no_steps_limit=False,
                 # don't use a list because it makes it hard to read option
                 # values when running in verbose mode. See #1284
                 ssh_bind_ports=xrange(40001, 40841),
