@@ -31,7 +31,6 @@ from mrjob.emr import _make_lock_uri
 from mrjob.emr import _POOLING_SLEEP_INTERVAL
 from mrjob.emr import EMRJobRunner
 from mrjob.pool import _pool_hash_and_name
-from mrjob.py2 import urljoin
 from mrjob.step import _is_spark_step_type
 from mrjob.step import StepFailedException
 
@@ -645,10 +644,12 @@ class YarnEMRJobRunner(EMRJobRunner):
                         step_desc='Application {}'.format(self._appid),
                         reason='See logs at {}'.format(tracking_url))
 
-    def _yrm_get(self, *paths, host=None, port=None, timeout=None):
+    def _yrm_get(self, path, host=None, port=None, timeout=None):
         """Use curl to perform an HTTP GET on the given path on the
         YARN Resource Manager. Either return decoded JSON from the call,
         or raise an IOError
+
+        *path* should not start with a '/'
 
         More info on the YARN REST API can be found here:
 
@@ -664,9 +665,8 @@ class YarnEMRJobRunner(EMRJobRunner):
         if timeout is None:
             timeout = _YARN_API_TIMEOUT
 
-        yrm_url = urljoin(
-            'http://{}:{:d}'.format(host, port),
-            '/'.join((_YRM_BASE_PATH,) + paths)
+        yrm_url = 'http://{}:{:d}/{}/{}'.format(
+            host, port, _YRM_BASE_PATH, path
         )
 
         curl_args = [
