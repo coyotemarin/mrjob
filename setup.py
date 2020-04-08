@@ -33,7 +33,6 @@ try:
         },
         'install_requires': [
             'PyYAML>=3.10',
-            'requests',  # required for Affirm fork
         ],
         'provides': ['mrjob'],
         'test_suite': 'tests',
