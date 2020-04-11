@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Copyright 2017-2018 Yelp
 # Copyright 2019 Yelp
+# Copyright 2020 Affirm, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,32 +22,22 @@ import random
 import signal
 import time
 from copy import deepcopy
-from os.path import basename
 from subprocess import Popen
 from subprocess import PIPE
 
 from mrjob.bin import MRJobBinRunner
+from mrjob.bin import _unarchive_cmd
 from mrjob.conf import combine_dicts
 from mrjob.py2 import integer_types
 from mrjob.py2 import xrange
 from mrjob.setup import WorkingDirManager
 from mrjob.setup import parse_setup_cmd
 from mrjob.util import cmd_line
-from mrjob.util import file_ext
 
 log = logging.getLogger(__name__)
 
 # don't try to bind SSH tunnel to more than this many local ports
 _MAX_SSH_RETRIES = 20
-
-
-# map archive file extensions to the command used to unarchive them
-_EXT_TO_UNARCHIVE_CMD = {
-    '.zip': 'unzip -o %(file)s -d %(dir)s',
-    '.tar': 'mkdir %(dir)s; tar xf %(file)s -C %(dir)s',
-    '.tar.gz': 'mkdir %(dir)s; tar xfz %(file)s -C %(dir)s',
-    '.tgz': 'mkdir %(dir)s; tar xfz %(file)s -C %(dir)s',
-}
 
 # issue a warning if max_mins_idle is set to less than this
 _DEFAULT_MAX_MINS_IDLE = 10.0
@@ -335,20 +326,18 @@ class HadoopInTheCloudJobRunner(MRJobBinRunner):
 
             for name, path in archive_names_and_paths:
                 uri = self._upload_mgr.uri(path)
-                ext = file_ext(basename(path))
+
+                archive_file_name = self._bootstrap_dir_mgr.name(
+                    'archive_file', path)
 
                 # copy file to tmp dir
-                quoted_archive_path = '$__mrjob_TMP/%s' % pipes.quote(name)
+                quoted_archive_path = '$__mrjob_TMP/%s' % pipes.quote(
+                    archive_file_name)
 
                 out.append('  %s %s %s' % (
                     cp_to_local, pipes.quote(uri), quoted_archive_path))
 
-                # unarchive file
-                if ext not in _EXT_TO_UNARCHIVE_CMD:
-                    raise KeyError('unknown archive file extension: %s' % path)
-                unarchive_cmd = _EXT_TO_UNARCHIVE_CMD[ext]
-
-                out.append('  ' + unarchive_cmd % dict(
+                out.append('  ' + _unarchive_cmd(path) % dict(
                     file=quoted_archive_path,
                     dir='$__mrjob_PWD/' + pipes.quote(name)))
 

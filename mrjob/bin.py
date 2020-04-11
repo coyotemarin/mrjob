@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Copyright 2009-2017 Yelp and Contributors
-# Copyright 2018 Yelp
-# Copyright 2019 Yelp
+# Copyright 2018-2019 Yelp
+# Copyright 2020 Affirm, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import os.path
 import pipes
 import re
 import sys
+from mrjob.py2 import PY2
 from platform import python_implementation
 from subprocess import Popen
 from subprocess import PIPE
@@ -46,7 +47,6 @@ from mrjob.conf import combine_dicts
 from mrjob.logs.log4j import _parse_hadoop_log4j_records
 from mrjob.logs.spark import _parse_spark_log
 from mrjob.logs.step import _eio_to_eof
-from mrjob.py2 import PY2
 from mrjob.py2 import string_types
 from mrjob.runner import MRJobRunner
 from mrjob.setup import parse_setup_cmd
@@ -63,6 +63,25 @@ _HADOOP_SAFE_ARG_RE = re.compile(r'^[\w\./=-]*$')
 
 # used to handle manifest files
 _MANIFEST_INPUT_FORMAT = 'org.apache.hadoop.mapred.lib.NLineInputFormat'
+
+# map archive file extensions to the command used to unarchive them
+_EXT_TO_UNARCHIVE_CMD = {
+    '.zip': 'unzip -o %(file)s -d %(dir)s',
+    '.tar': 'mkdir %(dir)s; tar xf %(file)s -C %(dir)s',
+    '.tar.gz': 'mkdir %(dir)s; tar xfz %(file)s -C %(dir)s',
+    '.tgz': 'mkdir %(dir)s; tar xfz %(file)s -C %(dir)s',
+}
+
+
+def _unarchive_cmd(path):
+    """Look up the unarchive command to use with the given file extension,
+    or raise KeyError if there is no matching command."""
+    for ext, unarchive_cmd in sorted(_EXT_TO_UNARCHIVE_CMD.items()):
+        # use this so we can match e.g. mrjob-0.7.0.tar.gz
+        if path.endswith(ext):
+            return unarchive_cmd
+
+    raise KeyError('unknown archive type: %s' % path)
 
 
 class MRJobBinRunner(MRJobRunner):
@@ -178,25 +197,19 @@ class MRJobBinRunner(MRJobRunner):
 
     def _default_python_bin(self, local=False):
         """The default python command. If local is true, try to use
-        sys.executable. Otherwise use 'python' or 'python3' as appropriate.
+        sys.executable. Otherwise use 'python2.7' or 'python3' as appropriate.
 
         This returns a single-item list (because it's a command).
         """
-        major_version = sys.version_info[0]
         is_pypy = (python_implementation() == 'PyPy')
 
         if local and sys.executable:
             return [sys.executable]
-        elif PY2:
-            if is_pypy:
-                return ['pypy']
-            else:
-                return ['python']
         else:
-            if is_pypy:
-                return ['pypy%d' % major_version]
+            if PY2:
+                return ['pypy'] if is_pypy else ['python2.7']
             else:
-                return ['python%d' % major_version]
+                return ['pypy3'] if is_pypy else ['python3']
 
     ### running MRJob scripts ###
 
@@ -438,18 +451,36 @@ class MRJobBinRunner(MRJobRunner):
                     'manifest setup wrapper script',
                     manifest=True)
 
-        if (self._uses_spark_setup_script() and not
-                self._spark_python_wrapper_path):
+        if (self._has_pyspark_steps() and
+                self._spark_executors_have_own_wd() and
+                not self._spark_python_wrapper_path):
 
-            self._spark_python_wrapper_path = self._write_setup_script(
-                self._setup,
-                'python-wrapper.sh', 'Spark Python wrapper script',
-                wrap_python=True)
+            pyspark_setup = self._pyspark_setup()
+            if pyspark_setup:
+                self._spark_python_wrapper_path = self._write_setup_script(
+                    pyspark_setup,
+                    'python-wrapper.sh', 'Spark Python wrapper script',
+                    wrap_python=True)
 
-    def _uses_spark_setup_script(self):
-        return (self._setup and
-                self._has_pyspark_steps() and
-                self._spark_executors_have_own_wd())
+    def _pyspark_setup(self):
+        """Like ``self._setup``, but prepends commands for archive
+        emulation if needed."""
+        setup = []
+
+        if self._emulate_archives_on_spark():
+            for name, path in sorted(
+                    self._working_dir_mgr.name_to_path('archive').items()):
+
+                archive_file_name = self._working_dir_mgr.name(
+                    'archive_file', path)
+
+                setup.append(_unarchive_cmd(path) % dict(
+                    file=pipes.quote(archive_file_name),
+                    dir=pipes.quote(name)))
+
+        setup.extend(self._setup)
+
+        return setup
 
     def _py_files_setup(self):
         """A list of additional setup commands to emulate Spark's
@@ -959,14 +990,15 @@ class MRJobBinRunner(MRJobRunner):
         return args
 
     def _spark_upload_args(self):
-        if self._spark_executors_have_own_wd():
-            return self._upload_args_helper(
-                '--files', None,
-                '--archives', None,
-                always_use_hash=False)
-        else:
+        if not self._spark_executors_have_own_wd():
             # don't bother, there's no working dir to upload to
             return []
+
+        return self._upload_args_helper(
+            '--files', None,
+            '--archives', None,
+            always_use_hash=False,
+            emulate_archives=self._emulate_archives_on_spark())
 
     def _spark_script_path(self, step_num):
         """The path of the spark script or JAR, used by

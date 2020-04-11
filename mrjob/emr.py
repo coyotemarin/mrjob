@@ -2,6 +2,7 @@
 # Copyright 2009-2017 Yelp and Contributors
 # Copyright 2018 Yelp
 # Copyright 2019 Yelp and Contributors
+# Copyright 2020 Affirm, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -343,6 +344,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         'pool_wait_minutes',
         'release_label',
         's3_endpoint',
+        'ssh_add_bin',
         'ssh_bin',
         'ssh_bind_ports',
         'ssh_tunnel',
@@ -564,19 +566,6 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         else:
             return opt_value
 
-    def _default_python_bin(self, local=False):
-        """Like :py:meth:`mrjob.runner.MRJobRunner._default_python_bin`,
-        except when running Python 2, we explicitly pick :command:`python2.7`
-        on AMIs prior to 4.3.0 where's it's not the default.
-        """
-        python_bin = super(EMRJobRunner, self)._default_python_bin(local=local)
-
-        if python_bin == ['python'] and not (
-                self._image_version_gte('4.3.0') or local):
-            return ['python2.7']
-        else:
-            return python_bin
-
     def _image_version_gte(self, version):
         """Check if the requested image version is greater than
         or equal to *version*. If the *release_label* opt is set,
@@ -683,6 +672,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             if self._opts['ec2_key_pair_file']:
                 self._fs.add_fs('ssh', SSHFilesystem(
                     ssh_bin=self._ssh_bin(),
+                    ssh_add_bin=self._ssh_add_bin(),
                     ec2_key_pair_file=self._opts['ec2_key_pair_file']))
 
             self._fs.add_fs('s3', S3Filesystem(
@@ -869,9 +859,6 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
     def _add_job_files_for_upload(self):
         """Add files needed for running the job (setup and input)
         to self._upload_mgr."""
-        for path in self._working_dir_mgr.paths('archive'):
-            self._upload_mgr.add(path)
-
         for path in self._py_files():
             self._upload_mgr.add(path)
 
@@ -883,6 +870,10 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             for key in 'jar', 'script':
                 if step.get(key):
                     self._upload_mgr.add(step[key])
+
+    def _ssh_add_bin(self):
+        # the args of the ssh-add binary
+        return self._opts['ssh_add_bin'] or ['ssh-add']
 
     def _ssh_bin(self):
         # the args of the ssh binary
@@ -2708,8 +2699,9 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                 valid_clusters, invalid_clusters,
                 locked_clusters, num_steps)
             log.debug(
-                '  Found %d usable clusters%s%s' % (
+                '  Found %d usable cluster%s%s%s' % (
                     len(cluster_info_list),
+                    '' if len(cluster_info_list) == 1 else 's',
                     ': ' if cluster_info_list else '',
                     ', '.join(c for c, n in reversed(cluster_info_list))))
 
@@ -2785,8 +2777,6 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             self._bootstrap_actions(),
             self._bootstrap_mrjob(),
         ]
-
-        #import pdb; pdb.set_trace()
 
         if self._bootstrap_mrjob():
             things_to_hash.append(mrjob.__version__)

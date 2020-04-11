@@ -1,5 +1,6 @@
 # Copyright 2009-2018 Yelp
 # Copyright 2019 Yelp
+# Copyright 2020 Affirm, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -65,7 +66,7 @@ from tests.sandbox import mrjob_conf_patcher
 is_pypy = (python_implementation() == 'PyPy')
 PYTHON_BIN = (
     ('pypy' if PY2 else 'pypy3') if is_pypy else
-    ('python' if PY2 else 'python3')
+    ('python2.7' if PY2 else 'python3')
 )
 
 # a --spark-master that has a working directory and is available from pyspark
@@ -626,7 +627,7 @@ class SetupTestCase(SandboxedTestCase):
 
         # foo.py should be there, and getsize() should be patched to return
         # double the number of bytes
-        self.assertEqual(path_to_size.get('./foo.tar.gz/foo.py'),
+        self.assertEqual(path_to_size.get('./foo/foo.py'),
                          self.foo_py_size * 2)
 
     def test_python_dir_archive(self):
@@ -643,7 +644,7 @@ class SetupTestCase(SandboxedTestCase):
 
         # foo.py should be there, and getsize() should be patched to return
         # double the number of bytes
-        self.assertEqual(path_to_size.get('./foo.tar.gz/foo.py'),
+        self.assertEqual(path_to_size.get('./foo/foo.py'),
                          self.foo_py_size * 2)
 
     def test_python_zip_file(self):
@@ -1417,10 +1418,13 @@ class SparkSubmitArgsTestCase(SandboxedTestCase):
                      runner._dest_in_wd_mirror(runner._script_path,
                                                'mr_null_spark.py')),
                     '--archives',
-                    (runner._upload_mgr.uri(baz_path) + '#baz.tar.gz' +
+                    # named baz-1.tar.gz in wd mirror to leave room for the
+                    # name baz.tar.gz
+                    (runner._dest_in_wd_mirror(
+                        baz_path, 'baz-1.tar.gz') + '#baz.tar.gz' +
                      ',' +
-                     runner._upload_mgr.uri(
-                         runner._dir_archive_path(qux_path)) + '#qux')
+                     runner._dest_in_wd_mirror(
+                         qux_path, 'qux.tar.gz') + '#qux')
                 ]
             )
 

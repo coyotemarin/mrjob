@@ -1,4 +1,5 @@
 # Copyright 2019 Yelp
+# Copyright 2020 Affirm, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -679,6 +680,7 @@ class GroupStepsTestCase(MockFilesystemsTestCase):
         ])
 
 
+@skipIf(pyspark is None, 'no pyspark module')
 class SparkCounterSimulationTestCase(MockFilesystemsTestCase):
     # trying to keep number of tests small, since they run actual Spark jobs
 
