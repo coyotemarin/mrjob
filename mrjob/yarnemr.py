@@ -31,6 +31,7 @@ from mrjob.emr import _make_lock_uri
 from mrjob.emr import _POOLING_SLEEP_INTERVAL
 from mrjob.emr import EMRJobRunner
 from mrjob.pool import _pool_hash_and_name
+from mrjob.py2 import urljoin
 from mrjob.step import _is_spark_step_type
 from mrjob.step import StepFailedException
 
@@ -595,7 +596,7 @@ class YarnEMRJobRunner(EMRJobRunner):
 
     def _get_application_info(self):
         """Queries the cluster for state of application."""
-        return self._yrm_get('apps', self._appid)['app']
+        return self._yrm_get('apps/{}'.format(self._appid))['app']
 
     def _get_yarn_logs(self):
         """Retrieve YARN application logs. We use the `yarn` cli tool since
@@ -665,8 +666,10 @@ class YarnEMRJobRunner(EMRJobRunner):
         if timeout is None:
             timeout = _YARN_API_TIMEOUT
 
-        yrm_url = 'http://{}:{:d}/{}/{}'.format(
-            host, port, _YRM_BASE_PATH, path
+        # using urljoin() to avoid a double / when joining host/port with path
+        yrm_url = urljoin(
+            'http://{}:{:d}'.format(host, port),
+            '{}/{}'.format(_YRM_BASE_PATH, path)
         )
 
         curl_args = [
