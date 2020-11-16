@@ -2659,6 +2659,12 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             time.sleep(seconds)
 
         log.info('Attempting to find an available cluster...')
+
+        jitter_seconds = randint(0, self._opts['pool_jitter_seconds'])
+        log.info('  waiting %d seconds to avoid lock contention...'
+                 % jitter_seconds)
+        sleep_or_time_out(jitter_seconds)
+
         while True:
             cluster_ids = self._list_cluster_ids_for_pooling()
 
