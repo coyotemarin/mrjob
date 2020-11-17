@@ -24,6 +24,7 @@ only a need for pooling on EMR.
 import time
 from collections import defaultdict
 from logging import getLogger
+from random import randrange
 
 try:
     from botocore.exceptions import ClientError
@@ -553,8 +554,11 @@ _WAIT_AFTER_ADD_TAG = 10.0
 # start running, before the lock expires
 _CHECK_TAG_BEFORE = 20.0
 
-# tag key used for locking pooled clusters
-_POOL_LOCK_KEY = '__mrjob_pool_lock'
+
+def _make_cluster_lock_key(slot_num):
+    """The tag key corresponding to the given slot."""
+    # clusters can run at most 256 steps at once, so 3 digits is enough
+    return '__mrjob_pool_lock_%03d' % slot_num
 
 
 def _make_cluster_lock(job_key, expiry):
@@ -582,14 +586,24 @@ def _parse_cluster_lock(lock):
     return job_key, expiry
 
 
-def _get_cluster_lock(cluster):
-    return _extract_tags(cluster).get(_POOL_LOCK_KEY)
+def _get_cluster_lock(cluster, cluster_lock_key):
+    return _extract_tags(cluster).get(cluster_lock_key)
+
+
+def _count_active_steps(emr_client, cluster_id):
+   return len(list(_boto3_paginate(
+       'Steps', emr_client, 'list_steps',
+       ClusterId=cluster_id,
+       StepStates=['PENDING', 'RUNNING'])))
 
 
 def _attempt_to_lock_cluster(
         emr_client, cluster_id, job_key,
         cluster=None, when_cluster_described=None):
     """Attempt to lock the given pooled cluster using EMR tags.
+
+    Returns the name of the tag we used to lock the cluster, which can later
+    be used to unlock the cluster (see :py:func:`_attempt_to_unlock_cluster`).
 
     You may optionally include *cluster* (a cluster description) and
     *when_cluster_described*, to save an API call to ``DescribeCluster``
@@ -606,7 +620,7 @@ def _attempt_to_lock_cluster(
     Because other jobs looking to join the cluster will also count steps,
     we can release our lock as soon as we add our steps.
     """
-    log.debug('Attempting to lock cluster %s for %.1f seconds' % (
+    log.debug('  Attempting to lock cluster %s for %.1f seconds' % (
         cluster_id, _CLUSTER_LOCK_SECS))
 
     if cluster is None:
@@ -627,39 +641,66 @@ def _attempt_to_lock_cluster(
 
     if state not in step_accepting_states:
         # this could happen if the cluster were TERMINATING, for example
-        log.info('  cluster is not accepting steps, state is %s' % state)
-        return False
+        log.info('    cluster is not accepting steps, state is %s' % state)
+        return
 
-    lock = _get_cluster_lock(cluster)
+    # determine how many "slots" are available for us to add a new step.
+    # each slot has its own independent lock
+    if cluster['StepConcurrencyLevel'] == 1:
+        num_slots = 1
+    else:
+        num_active_steps = _count_active_steps(emr_client, cluster_id)
+        num_slots = cluster['StepConcurrencyLevel'] - num_active_steps
+
+        if num_slots < 1:
+            log.info(
+                '    cluster already has %d active step%s' % (
+                    num_active_steps, _plural(num_active_steps)))
+            return
+
+        log.debug(
+            '    cluster has %d active step%s, out of a possible %d' %
+            (num_active_steps, _plural(num_active_steps),
+             cluster['StepConcurrencyLevel']))
+
+    slot_num = randrange(num_slots)
+    if cluster['StepConcurrencyLevel'] > 1:
+        # without concurrency, there is only one lock
+        log.info('    attempting to acquire lock #%d' % slot_num)
+
+    cluster_lock_key = _make_cluster_lock_key(slot_num)
+
+    log.debug('    checking tag %s for existing lock' % cluster_lock_key)
+    lock = _get_cluster_lock(cluster, cluster_lock_key)
 
     if lock:
         expiry = None
         try:
             their_job_key, expiry = _parse_cluster_lock(lock)
         except ValueError:
-            log.info('  ignoring invalid pool lock: %s' % lock)
+            log.warning('    ignoring invalid lock value: %s' % lock)
 
         if expiry and expiry > start:
-            log.info('  locked by %s for %.1f seconds' % (
+            log.info('    locked by %s for %.1f seconds' % (
                 their_job_key, expiry - start))
-            return False
+            return
 
     # add our lock
     our_lock = _make_cluster_lock(job_key, start + _CLUSTER_LOCK_SECS)
 
-    log.debug('  adding tag to cluster %s:' % cluster_id)
-    log.debug('    %s=%s' % (_POOL_LOCK_KEY, our_lock))
+    log.debug('    adding tag containing cluster lock: %s=%s' % (
+        cluster_lock_key, our_lock))
     emr_client.add_tags(
         ResourceId=cluster_id,
-        Tags=[dict(Key=_POOL_LOCK_KEY, Value=our_lock)]
+        Tags=[dict(Key=cluster_lock_key, Value=our_lock)]
     )
 
     if time.time() - start > _ADD_TAG_BEFORE:
-        log.info('  took too long to tag cluster with lock')
-        return False
+        log.info('    took too long to tag cluster with lock')
+        return
 
     # wait, then check if our lock is still there
-    log.info("  waiting %.1f seconds to ensure lock wasn't overwritten" %
+    log.info("    waiting %.1f seconds to ensure lock wasn't overwritten" %
              _WAIT_AFTER_ADD_TAG)
     time.sleep(_WAIT_AFTER_ADD_TAG)
 
@@ -670,26 +711,24 @@ def _attempt_to_lock_cluster(
 
     if state not in step_accepting_states:
         # this could happen if the cluster were TERMINATING, for example
-        log.info('  cluster is not accepting steps, state is %s' % state)
-        return False
+        log.info('    cluster is not accepting steps, state is %s' % state)
+        return
 
     if cluster['StepConcurrencyLevel'] > 1:
         # is cluster already full of steps?
-        num_active_steps = len(list(_boto3_paginate(
-            'Steps', emr_client, 'list_steps',
-            ClusterId=cluster_id,
-            StepStates=['PENDING', 'RUNNING'])))
+        num_active_steps = _count_active_steps(emr_client, cluster_id)
 
         if num_active_steps >= cluster['StepConcurrencyLevel']:
             log.info(
-                '  cluster already has %d active steps' % num_active_steps)
+                '    cluster already has %d active step%s' % (
+                    num_active_steps, _plural(num_active_steps)))
             return
 
-    lock = _get_cluster_lock(cluster)
+    lock = _get_cluster_lock(cluster, cluster_lock_key)
 
     if lock is None:
-        log.info('  lock was removed')
-        return False
+        log.info('    our lock was removed')
+        return
     elif lock != our_lock:
         their_job_desc = 'other job'
         try:
@@ -697,20 +736,20 @@ def _attempt_to_lock_cluster(
         except ValueError:
             pass
 
-        log.info('  lock was overwritten by %s' % their_job_desc)
-        return False
+        log.info('    our lock was overwritten by %s' % their_job_desc)
+        return
 
     # make sure we have enough time to add steps and have them run
     # before the lock expires
     if time.time() > start + _CHECK_TAG_BEFORE:
-        log.info('  took too long to check for lock')
-        return False
+        log.info('    took too long to check for lock')
+        return
 
-    log.info('  lock acquired')
-    return True
+    log.info('    lock acquired')
+    return cluster_lock_key
 
 
-def _attempt_to_unlock_cluster(emr_client, cluster_id):
+def _attempt_to_unlock_cluster(emr_client, cluster_id, cluster_lock_key):
     """Release our lock on the given pooled cluster. Only do this if you know
     the cluster is currently running steps (so other jobs won't try to
     join the cluster).
@@ -725,8 +764,17 @@ def _attempt_to_unlock_cluster(emr_client, cluster_id):
     due to clock skew. Also makes unit testing more straightforward.
     """
     try:
-        emr_client.remove_tags(ResourceId=cluster_id, TagKeys=[_POOL_LOCK_KEY])
+        emr_client.remove_tags(
+            ResourceId=cluster_id, TagKeys=[cluster_lock_key])
         return True
     except ClientError as ex:
         log.debug('removing tags failed: %r' % ex)
         return False
+
+
+def _plural(n):
+    """Utility for logging messages"""
+    if n == 1:
+        return ''
+    else:
+        return 's'

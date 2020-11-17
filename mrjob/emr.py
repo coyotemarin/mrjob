@@ -91,6 +91,7 @@ from mrjob.pool import _cluster_name_suffix
 from mrjob.pool import _instance_fleets_satisfy
 from mrjob.pool import _instance_groups_satisfy
 from mrjob.pool import _parse_cluster_name_suffix
+from mrjob.pool import _plural
 from mrjob.py2 import PY2
 from mrjob.py2 import string_types
 from mrjob.py2 import to_unicode
@@ -404,7 +405,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         self._created_cluster = False
 
         # did we acquire a lock on self._cluster_id? (used for pooling)
-        self._locked_cluster = None
+        self._cluster_lock_key = None
 
         # IDs of steps we have submitted to the cluster
         self._step_ids = []
@@ -1468,15 +1469,13 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         """
         # step concurrency level of a cluster we added steps to, used
         # for locking
-        step_concurrency_level = None
+        step_concurrency = None
 
         # try to find a cluster from the pool. basically auto-fill
         # 'cluster_id' if possible and then follow normal behavior.
         if (self._opts['pool_clusters'] and not self._cluster_id):
-            cluster_id, step_concurrency_level = self._find_cluster()
-            if cluster_id:
-                self._cluster_id = cluster_id
-                self._locked_cluster = True
+            self._cluster_id, step_concurrency, self._cluster_lock_key = (
+                self._find_cluster())
 
         # create a cluster if we're not already using an existing one
         if not self._cluster_id:
@@ -1502,7 +1501,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
 
         # if we locked a cluster with concurrent steps, we can release
         # the lock immediately
-        if step_concurrency_level and step_concurrency_level > 1:
+        if step_concurrency and step_concurrency > 1:
             self._release_cluster_lock()
 
         # learn about how fast the cluster state switches
@@ -1515,7 +1514,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
             self.fs.ssh.use_sudo_over_ssh()
 
     def _release_cluster_lock(self):
-        if not self._locked_cluster:
+        if not self._cluster_lock_key:
             return
 
         emr_client = self.make_emr_client()
@@ -1523,8 +1522,9 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
         log.info('  releasing cluster lock')
         # this can fail, but usually it's because the cluster
         # started terminating, so only try releasing the lock once
-        _attempt_to_unlock_cluster(emr_client, self._cluster_id)
-        self._locked_cluster = False
+        _attempt_to_unlock_cluster(
+            emr_client, self._cluster_id, self._cluster_lock_key)
+        self._cluster_lock_key = None
 
     def _add_steps_to_cluster(self, steps):
         """Add steps (from _steps_to_submit()) to our cluster and append their
@@ -2636,7 +2636,9 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
     def _find_cluster(self):
         """Find a cluster that can host this runner. Prefer clusters with more
         compute units. Break ties by choosing cluster with longest idle time.
-        Return ``None`` if no suitable clusters exist.
+
+        Return ``(cluster_id, step_concurrency_level, cluster_lock_key)``,
+        or ``(None, None, None)`` if no suitable clusters exist.
         """
         emr_client = self.make_emr_client()
 
@@ -2668,13 +2670,13 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                 step_concurrency_level = cluster['StepConcurrencyLevel']
 
                 log.info('  Attempting to join cluster %s' % cluster_id)
-                lock_acquired = _attempt_to_lock_cluster(
+                cluster_lock_key = _attempt_to_lock_cluster(
                     emr_client, cluster_id, self._job_key,
                     cluster=cluster,
                     when_cluster_described=when_cluster_described)
 
-                if lock_acquired:
-                    return cluster_id, step_concurrency_level
+                if cluster_lock_key:
+                    return cluster_id, step_concurrency_level, cluster_lock_key
 
             keep_waiting = (
                 datetime.now() < start + timedelta(minutes=wait_mins))
@@ -2724,7 +2726,7 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
                         (not keep_waiting or not new_cluster_ids['matching'])):
 
                     # allow creating a new cluster
-                    return None, None
+                    return None, None, None
 
                 log.info('Checking again in %d seconds...' % (
                     _POOLING_SLEEP_INTERVAL))
@@ -2734,10 +2736,10 @@ class EMRJobRunner(HadoopInTheCloudJobRunner, LogInterpretationMixin):
 
             # pool_wait_minutes is exhausted and max_clusters_in_pool is not
             # set, so create a new cluster
-            return None, None
+            return None, None, None
 
         # (defensive programming, in case we break out of the loop)
-        return None, None
+        return None, None, None
 
     def _pool_hash_dict(self):
         """A dictionary of information that must be matched exactly to
@@ -3363,11 +3365,3 @@ def _build_instance_group(role, instance_type, num_instances, bid_price):
         ig['BidPrice'] = str(bid_price)  # must be a string
 
     return ig
-
-
-def _plural(n):
-    """Utility for logging messages"""
-    if n == 1:
-        return ''
-    else:
-        return 's'
