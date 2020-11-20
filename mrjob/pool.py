@@ -554,6 +554,10 @@ _WAIT_AFTER_ADD_TAG = 10.0
 # start running, before the lock expires
 _CHECK_TAG_BEFORE = 20.0
 
+# don't allow more than this many locks on one cluster, so we don't run
+# out of tags (the maximum number of tags on a cluster appears to be 50)
+_MAX_LOCK_TAGS = 25
+
 
 def _make_cluster_lock_key(slot_num):
     """The tag key corresponding to the given slot."""
@@ -650,7 +654,9 @@ def _attempt_to_lock_cluster(
         num_slots = 1
     else:
         num_active_steps = _count_active_steps(emr_client, cluster_id)
-        num_slots = cluster['StepConcurrencyLevel'] - num_active_steps
+        num_slots = min(
+            cluster['StepConcurrencyLevel'] - num_active_steps,
+            _MAX_LOCK_TAGS)
 
         if num_slots < 1:
             log.info(
